@@ -124,7 +124,7 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 		off = max(off, l.pendingSnapshot.Metadata.Index+1)
 	}
 	if l.committed >= off {
-		return l.entries[off-l.offset : min(uint64(len(l.entries)), l.committed-l.offset+1)]
+		return l.entries[off-l.offset : min(uint64(len(l.entries)+1), l.committed-l.offset+1)]
 	}
 	return nil
 }
@@ -156,9 +156,9 @@ func (l *RaftLog) LastTerm() uint64 {
 }
 
 // Term return the term of the entry in the given index
-func (l *RaftLog) Term(i uint64) (uint64, error) {
+func (l *RaftLog) Term(i uint64) (uint64, error) { //Todo@wy handle -1
 	// Your Code Here (2A).
-	if len := len(l.entries); len > 0 && i > l.offset {
+	if len := len(l.entries); len > 0 && i >= l.offset {
 		if i < l.offset+uint64(len) {
 			return l.entries[i-l.offset].Term, nil
 		} else {
@@ -184,10 +184,90 @@ func (l *RaftLog) isUpToDate(index uint64, logTerm uint64) bool {
 	return false
 }
 
-func (l *RaftLog) appendEntries(ents ...pb.Entry) {
-	l.entries = append(l.entries, ents...)
+func (l *RaftLog) findConflictByTerm(index uint64, term uint64) uint64 {
+	if li := l.LastIndex(); li < index {
+		return li
+	} else {
+		for {
+			logTerm, err := l.Term(index)
+			if logTerm <= term || err != nil {
+				break
+			}
+			index -= 1
+		}
+		return index
+	}
+
+}
+
+func (l *RaftLog) maybeAppend(index, logTerm, committed uint64, ents ...*pb.Entry) (lastnewi uint64, ok bool) {
+	// ti, _ := l.Term(index)
+	// log.Printf("%v %v\n", ti, logTerm)
+	if l.zeroTermOnErrCompacted(l.Term(index)) == logTerm {
+		for _, ent := range ents {
+			lastIndex := l.LastIndex()
+			if ent.Index <= lastIndex {
+				if l.zeroTermOnErrCompacted(l.Term(ent.Index)) == ent.Term {
+					l.applied = ent.Index
+				} else {
+					l.entries[ent.Index-l.offset] = *ent
+					if (ent.Index+1 < lastIndex) && l.zeroTermOnErrCompacted(l.Term(ent.Index+1)) < ent.Term {
+						l.entries = l.entries[:ent.Index-l.offset+1]
+					}
+				}
+			} else {
+				l.entries = append(l.entries, *ent)
+			}
+		}
+		// l.appendEntries(ents...)
+		l.commitTo(min(committed, l.LastIndex()))
+		return ents[len(ents)-1].Index, true
+	}
+	return 0, false
+}
+
+func (l *RaftLog) appendEntries(ents ...*pb.Entry) uint64 {
+	// l.entries = append(l.entries, ents...)
+	for _, ent := range ents {
+		l.entries = append(l.entries, *ent)
+	}
+	return l.LastIndex()
+}
+
+func (l *RaftLog) getEntries(lo uint64, hi uint64) ([]*pb.Entry, error) {
+	if lo >= l.offset && hi <= l.offset+uint64(len(l.entries)) {
+		ents := make([]*pb.Entry, 0)
+		for ; lo < hi; lo += 1 {
+			ents = append(ents, &l.entries[lo-l.offset])
+		}
+		return ents, nil
+	}
+	return nil, ErrUnavailable
+}
+
+func (l *RaftLog) maybeCommit(committedIndex uint64, term uint64) bool {
+	if l.committed >= committedIndex {
+		return false
+	}
+	if l.zeroTermOnErrCompacted(l.Term(committedIndex)) != term {
+		return false
+	}
+	l.commitTo(committedIndex)
+	return true
 }
 
 func (l *RaftLog) commitTo(committed uint64) {
+	l.committed = committed
+	// how to update in stabled storage ? Todo@wy
+}
 
+func (l *RaftLog) zeroTermOnErrCompacted(t uint64, err error) uint64 {
+	if err == nil {
+		return t
+	}
+	if err == ErrCompacted {
+		return 0
+	}
+	// log.Printf("unexpected error (%v)", err)
+	return 0
 }

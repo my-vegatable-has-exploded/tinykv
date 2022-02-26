@@ -16,7 +16,9 @@ package raft
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
+	"sort"
 
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
@@ -209,21 +211,6 @@ func newRaft(c *Config) *Raft {
 	return raft
 }
 
-// sendAppend sends an append RPC with new entries (if any) and the
-// current commit index to the given peer. Returns true if a message was sent.
-func (r *Raft) sendAppend(to uint64) bool {
-	// Your Code Here (2A).
-	return false
-}
-
-func (r *Raft) boradcastHeartbeat() {
-	for peer, _ := range r.Prs {
-		if peer != r.id {
-			r.sendHeartbeat(peer)
-		}
-	}
-}
-
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *Raft) sendHeartbeat(to uint64) {
 	// Your Code Here (2A).
@@ -317,22 +304,28 @@ func (r *Raft) becomeLeader() {
 	r.State = StateLeader
 
 	// temporarily commet in test2aa
-	// r.RaftLog.appendEntries(pb.Entry{
-	// 	EntryType: pb.EntryType_EntryNormal,
-	// 	Term:      r.Term,
-	// 	Index:     r.RaftLog.LastIndex() + 1,
-	// 	Data:      nil,
-	// })
+	r.RaftLog.appendEntries(&pb.Entry{
+		EntryType: pb.EntryType_EntryNormal,
+		Term:      r.Term,
+		Index:     r.RaftLog.LastIndex() + 1,
+		Data:      nil,
+	})
 
 	r.logSync()
 }
 
 func (r *Raft) logSync() {
 	lastIndex, _ := r.RaftLog.storage.LastIndex()
-	for _, p := range r.Prs {
-		p.Match = None //TODO@wy
+	for peer, p := range r.Prs {
+		if peer == r.id {
+			p.Match = lastIndex
+		} else {
+			p.Match = 0
+		}
 		p.Next = lastIndex + 1
 	}
+	r.boradcastAppend()
+	r.maybeCommit()
 }
 
 // Step the entrance of handle message, see `MessageType`
@@ -343,7 +336,7 @@ func (r *Raft) Step(m pb.Message) error {
 	case m.Term == 0:
 		// local message
 	case m.Term > r.Term:
-		if m.MsgType == pb.MessageType_MsgAppend || m.MsgType == pb.MessageType_MsgHeartbeat || m.MsgType == pb.MessageType_MsgSnapshot {
+		if m.MsgType == pb.MessageType_MsgAppend || m.MsgType == pb.MessageType_MsgHeartbeat || m.MsgType == pb.MessageType_MsgSnapshot { // only for message recieve from leader
 			r.becomeFollower(m.Term, m.From)
 		} else {
 			r.becomeFollower(m.Term, None)
@@ -429,12 +422,21 @@ func (r *Raft) campaign() {
 
 func (r *Raft) stepFollower(m pb.Message) error {
 	switch m.MsgType {
+	case pb.MessageType_MsgPropose:
+		if r.Lead == None {
+			m.To = r.Lead
+			r.msgs = append(r.msgs, m)
+		}
 	case pb.MessageType_MsgHeartbeat:
 		r.electionElapsed = 0
 		r.Lead = m.From //  have a new lead
 		r.handleHeartbeat(m)
-		// case pb.MessageType_MsgRequestVote:
-
+	// case pb.MessageType_MsgRequestVote:
+	case pb.MessageType_MsgAppend:
+		// log.Printf("test1")
+		r.electionElapsed = 0
+		r.Lead = m.From
+		r.handleAppendEntries(m)
 	}
 	return nil
 }
@@ -470,6 +472,14 @@ func (r *Raft) stepCandidate(m pb.Message) error {
 
 func (r *Raft) stepLeader(m pb.Message) error {
 	switch m.MsgType {
+	case pb.MessageType_MsgPropose:
+		if len(m.Entries) == 0 {
+			return errors.New("Empty propose message.")
+		}
+		if !r.appendEntries(m.Entries...) {
+			return ErrProposalDropped
+		}
+		r.boradcastAppend()
 	case pb.MessageType_MsgBeat:
 		r.boradcastHeartbeat()
 		return nil
@@ -477,13 +487,147 @@ func (r *Raft) stepLeader(m pb.Message) error {
 
 	case pb.MessageType_MsgHeartbeatResponse:
 
+		if r.Prs[m.From].Match < r.RaftLog.LastIndex() {
+			r.sendAppend(m.From)
+		}
+
+	case pb.MessageType_MsgAppendResponse:
+		pr := r.Prs[m.From]
+		if m.Reject {
+			nextProbeIndex := m.Index
+			if m.LogTerm > 0 {
+				nextProbeIndex = r.RaftLog.findConflictByTerm(nextProbeIndex, m.LogTerm)
+			}
+			if nextProbeIndex < pr.Next {
+				pr.Next = nextProbeIndex
+				r.sendAppend(m.From)
+			}
+		} else {
+			if r.Prs[m.From].Match < m.Index {
+				r.Prs[m.From].Match = max(r.Prs[m.From].Match, m.Index)
+				r.Prs[m.From].Next = max(r.Prs[m.From].Next, r.Prs[m.From].Match+1)
+				if r.maybeCommit() {
+					r.boradcastAppend()
+				}
+			}
+		}
 	}
 	return nil
+}
+
+func (r *Raft) boradcastHeartbeat() {
+	for peer, _ := range r.Prs {
+		if peer != r.id {
+			r.sendHeartbeat(peer)
+		}
+	}
 }
 
 // handleAppendEntries handle AppendEntries RPC request
 func (r *Raft) handleAppendEntries(m pb.Message) {
 	// Your Code Here (2A).
+	if m.Index < r.RaftLog.committed {
+		r.msgs = append(r.msgs, pb.Message{
+			MsgType: pb.MessageType_MsgAppendResponse,
+			From:    r.id,
+			To:      m.From,
+			Term:    r.Term,
+			Index:   r.RaftLog.committed,
+		})
+		return
+	}
+	// ents := make([]pb.Entry, 0)
+	// for i, ent := range m.Entries {
+	// 	ents[i] = *ent
+	// }
+	if mlastIndex, ok := r.RaftLog.maybeAppend(m.Index, m.LogTerm, m.Commit, m.Entries...); ok {
+		r.msgs = append(r.msgs, pb.Message{
+			MsgType: pb.MessageType_MsgAppendResponse,
+			From:    r.id,
+			To:      m.From,
+			Term:    r.Term,
+			Index:   mlastIndex,
+			Reject:  false,
+		})
+	} else {
+		hintIndex := min(m.Index, r.RaftLog.LastIndex())
+		hintIndex = r.RaftLog.findConflictByTerm(hintIndex, m.LogTerm)
+		hintTerm, err := r.RaftLog.Term(hintIndex)
+		if err != nil {
+			panic(fmt.Sprintf("term(%d) must be valid, but got %v", hintIndex, err))
+		}
+		r.msgs = append(r.msgs, pb.Message{
+			MsgType: pb.MessageType_MsgAppendResponse,
+			From:    r.id,
+			To:      m.From,
+			Term:    r.Term,
+			Reject:  true,
+			Index:   hintIndex,
+			LogTerm: hintTerm,
+		})
+	}
+}
+
+// sendAppend sends an append RPC with new entries (if any) and the
+// current commit index to the given peer. Returns true if a message was sent.
+func (r *Raft) sendAppend(to uint64) bool {
+	// Your Code Here (2A).
+	pr := r.Prs[to]
+	nextTerm, errt := r.RaftLog.Term(pr.Next - 1) //Todo@wy handle -1
+	ents, erre := r.RaftLog.getEntries(pr.Next, r.RaftLog.LastIndex()+1)
+	if errt != nil || erre != nil {
+		// log.Printf("error test")
+		// send snapshot
+	} else {
+		// log.Printf("to=%v %v %v %v", to, pr.Next, r.RaftLog.LastIndex(), ents)
+		// if len(ents) != 0 {
+		r.msgs = append(r.msgs, pb.Message{
+			MsgType: pb.MessageType_MsgAppend,
+			From:    r.id,
+			To:      to,
+			Term:    r.Term,
+			Entries: ents,
+			Index:   pr.Next - 1,
+			LogTerm: nextTerm,
+			Commit:  r.RaftLog.committed, // update peer's committed
+		})
+		// }
+	}
+
+	return true
+}
+
+func (r *Raft) boradcastAppend() {
+	for peer, _ := range r.Prs {
+		if peer != r.id {
+			r.sendAppend(peer)
+		}
+	}
+}
+
+func (r *Raft) appendEntries(ents ...*pb.Entry) bool {
+	off := r.RaftLog.LastIndex()
+	for i, _ := range ents {
+		ents[i].Term = r.Term
+		ents[i].Index = (off) + 1
+		off += 1
+	}
+	r.RaftLog.appendEntries(ents...)
+	r.Prs[r.id].Match = off
+	r.Prs[r.id].Next = off + 1
+	r.maybeCommit() // Todo@wy why here
+	return true
+}
+
+func (r *Raft) maybeCommit() bool {
+	matchs := make([]uint64, 0, len(r.Prs))
+	for peer, _ := range r.Prs {
+		matchs = append(matchs, r.Prs[peer].Match)
+	}
+	sort.Slice(matchs, func(i, j int) bool { return matchs[i] < matchs[j] })
+	committedIndex := matchs[len(r.Prs)/2]
+	// log.Printf("%v %v\n", matchs, committedIndex)
+	return r.RaftLog.maybeCommit(committedIndex, r.Term)
 }
 
 // handleHeartbeat handle Heartbeat RPC request
@@ -495,24 +639,6 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 		From:    r.id,
 		To:      m.From,
 	})
-	// switch r.State {
-	// case StateFollower:
-	// 	if r.Lead != m.From || r.Term != m.Term {
-	// 		r.msgs = append(r.msgs, pb.Message{
-	// 			MsgType: pb.MessageType_MsgHeartbeatResponse,
-	// 			From:    r.id,
-	// 			To:      m.From,
-	// 			Term:    r.Term,
-	// 			LogTerm: r.RaftLog.LastTerm(),
-	// 			Index:   r.RaftLog.LastIndex(),
-	// 			Reject:  true,
-	// 		})
-	// 	} else {
-	// 		r.resetTick()
-	// 	}
-	// case StateCandidate:
-	// case StateLeader:
-	// }
 }
 
 // handleSnapshot handle Snapshot RPC request

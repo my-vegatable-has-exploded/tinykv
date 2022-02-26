@@ -27,6 +27,7 @@ package raft
 
 import (
 	"fmt"
+	"log"
 	"reflect"
 	"sort"
 	"testing"
@@ -380,6 +381,7 @@ func TestLeaderStartReplication2AB(t *testing.T) {
 	msgs := r.readMessages()
 	sort.Sort(messageSlice(msgs))
 	ent := pb.Entry{Index: li + 1, Term: 1, Data: []byte("some data")}
+	log.Print(li)
 	wents := []pb.Entry{ent}
 	wmsgs := []pb.Message{
 		{From: 1, To: 2, Term: 1, MsgType: pb.MessageType_MsgAppend, Index: li, LogTerm: 1, Entries: []*pb.Entry{&ent}, Commit: li},
