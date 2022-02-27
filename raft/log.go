@@ -48,7 +48,8 @@ type RaftLog struct {
 	// Everytime handling `Ready`, the unstabled logs will be included.
 	stabled uint64
 
-	// all entries that have not yet compact.  Including unstabled entry to be handled, which means just recieve from client
+	// all entries that have not yet compact.  Including unstabled entry to be handled by leader, which means just recieve from client.
+	// for follower, unstable entry means entry recieve from leader and wait for  storge to memorystorage.
 	entries []pb.Entry
 
 	// the incoming unstable snapshot, if any.
@@ -59,6 +60,7 @@ type RaftLog struct {
 	// once time either entries or pendingSnapshot exit
 
 	// Your Data Here (2A).
+	// the start index of entries
 	offset uint64
 }
 
@@ -96,7 +98,7 @@ func newLog(storage Storage) *RaftLog {
 		stabled:         hi,
 		entries:         ents,
 		pendingSnapshot: nil,
-		offset:          lo,
+		offset:          max(lo, 1),
 	}
 }
 
@@ -113,7 +115,7 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 	if l.offset+uint64(len(l.entries))-1 > l.stabled {
 		return l.entries[l.stabled-l.offset+1:]
 	}
-	return nil
+	return make([]pb.Entry, 0)
 }
 
 // nextEnts returns all the committed but not applied entries
@@ -126,7 +128,7 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	if l.committed >= off {
 		return l.entries[off-l.offset : min(uint64(len(l.entries)+1), l.committed-l.offset+1)]
 	}
-	return nil
+	return make([]pb.Entry, 0)
 }
 
 // LastIndex return the last index of the log entries
@@ -178,7 +180,7 @@ func (l *RaftLog) Term(i uint64) (uint64, error) { //Todo@wy handle -1
 
 // vote promise log up-to-date
 func (l *RaftLog) isUpToDate(index uint64, logTerm uint64) bool {
-	if logTerm > l.LastTerm() || (logTerm == l.LastTerm() && index == l.LastTerm()) {
+	if logTerm > l.LastTerm() || (logTerm == l.LastTerm() && index >= l.LastIndex()) {
 		return true
 	}
 	return false
@@ -188,7 +190,7 @@ func (l *RaftLog) findConflictByTerm(index uint64, term uint64) uint64 {
 	if li := l.LastIndex(); li < index {
 		return li
 	} else {
-		for {
+		for { // find a last entry i, which i<=index &&  term(i)<=term
 			logTerm, err := l.Term(index)
 			if logTerm <= term || err != nil {
 				break
@@ -200,27 +202,45 @@ func (l *RaftLog) findConflictByTerm(index uint64, term uint64) uint64 {
 
 }
 
+// handle append message to check append
 func (l *RaftLog) maybeAppend(index, logTerm, committed uint64, ents ...*pb.Entry) (lastnewi uint64, ok bool) {
 	// ti, _ := l.Term(index)
 	// log.Printf("%v %v\n", ti, logTerm)
 	if l.zeroTermOnErrCompacted(l.Term(index)) == logTerm {
+		if len(ents) == 0 { // need to commmit
+			l.commitTo(min(committed, index)) // don't not use lastIndex, it may not sync with leader
+			return index, true
+		}
+		preStabled := l.stabled
+		modifyStabled := false
+		// l.applied = min(l.applied, ents[0].Index-1)
+		l.stabled = min(l.stabled, ents[0].Index-1)
+		// TODO@wy may not true , I don't think TestFollowerAppendEntries2AB make sense.
+		// entries may occur situation like pre...| now... | pre... and may need to modify the value of stabled
 		for _, ent := range ents {
 			lastIndex := l.LastIndex()
 			if ent.Index <= lastIndex {
 				if l.zeroTermOnErrCompacted(l.Term(ent.Index)) == ent.Term {
-					l.applied = ent.Index
+					l.stabled = max(l.committed, ent.Index)
+					// l.applied = ent.Index
 				} else {
 					l.entries[ent.Index-l.offset] = *ent
-					if (ent.Index+1 < lastIndex) && l.zeroTermOnErrCompacted(l.Term(ent.Index+1)) < ent.Term {
+					if (ent.Index+1 <= lastIndex) && l.zeroTermOnErrCompacted(l.Term(ent.Index+1)) <= ent.Term { // add equal for term to pass sageType_MsgAppend2AB
 						l.entries = l.entries[:ent.Index-l.offset+1]
 					}
+					modifyStabled = true
 				}
 			} else {
 				l.entries = append(l.entries, *ent)
+				modifyStabled = true
 			}
 		}
+		if !modifyStabled {
+			l.stabled = preStabled
+		}
 		// l.appendEntries(ents...)
-		l.commitTo(min(committed, l.LastIndex()))
+		// log.Printf("finsh:%+v\n", l.entries)
+		l.commitTo(min(committed, ents[len(ents)-1].Index))
 		return ents[len(ents)-1].Index, true
 	}
 	return 0, false
@@ -257,7 +277,12 @@ func (l *RaftLog) maybeCommit(committedIndex uint64, term uint64) bool {
 }
 
 func (l *RaftLog) commitTo(committed uint64) {
-	l.committed = committed
+	if l.committed < committed {
+		if l.LastIndex() < committed {
+			log.Printf("Committed position %+v is out of range of entry.\n", committed)
+		}
+		l.committed = committed
+	}
 	// how to update in stabled storage ? Todo@wy
 }
 

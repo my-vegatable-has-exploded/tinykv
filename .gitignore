@@ -6,3 +6,4 @@ bin/*
 _tools
 /vendor
 tp.go
+log.txt
