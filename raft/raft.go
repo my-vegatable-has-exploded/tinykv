@@ -673,3 +673,27 @@ func (r *Raft) addNode(id uint64) {
 func (r *Raft) removeNode(id uint64) {
 	// Your Code Here (3A).
 }
+
+func (r *Raft) softState() *SoftState {
+	return &SoftState{
+		Lead:      r.Lead,
+		RaftState: r.State,
+	}
+}
+
+func (r *Raft) hardState() pb.HardState {
+	return pb.HardState{
+		Term:   r.Term,
+		Vote:   r.Vote,
+		Commit: r.RaftLog.committed,
+	}
+}
+
+func (r *Raft) advance(rd Ready) {
+	if newApplied := rd.appiledCursor(); newApplied > r.RaftLog.applied {
+		r.RaftLog.applyTo(newApplied)
+	}
+	if n := len(rd.Entries); n > 0 {
+		r.RaftLog.stableTo(rd.Entries[n-1].Index)
+	}
+}

@@ -119,7 +119,7 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 }
 
 // nextEnts returns all the committed but not applied entries
-func (l *RaftLog) nextEnts() (ents []pb.Entry) {
+func (l *RaftLog) nextEnts() (ents []pb.Entry) { // Todo@wy where to limit commit entry whose term is not equal to raft term.
 	// Your Code Here (2A).
 	off := l.applied + 1
 	if !IsEmptySnap(l.pendingSnapshot) {
@@ -284,6 +284,20 @@ func (l *RaftLog) commitTo(committed uint64) {
 		l.committed = committed
 	}
 	// how to update in stabled storage ? Todo@wy
+}
+
+func (l *RaftLog) applyTo(applied uint64) {
+	if applied == 0 {
+		return // filter nil?
+	}
+	if l.committed < applied || l.applied > applied {
+		log.Printf("applied(%d) is out of range [prevApplied(%d), committed(%d)]", applied, l.applied, l.committed)
+	}
+	l.applied = applied
+}
+
+func (l *RaftLog) stableTo(i uint64) { // Todo@wy handle exception
+	l.stabled = i
 }
 
 func (l *RaftLog) zeroTermOnErrCompacted(t uint64, err error) uint64 {
