@@ -412,7 +412,7 @@ func (r *Raft) campaign() {
 	if len(r.Prs) == 1 {
 		r.becomeLeader()
 	}
-	for peer, _ := range r.Prs {
+	for peer := range r.Prs {
 		if peer != r.id {
 			r.msgs = append(r.msgs, pb.Message{
 				MsgType: pb.MessageType_MsgRequestVote,
@@ -527,7 +527,7 @@ func (r *Raft) stepLeader(m pb.Message) error {
 }
 
 func (r *Raft) boradcastHeartbeat() {
-	for peer, _ := range r.Prs {
+	for peer := range r.Prs {
 		if peer != r.id {
 			r.sendHeartbeat(peer)
 		}
@@ -613,7 +613,7 @@ func (r *Raft) sendAppend(to uint64) bool {
 }
 
 func (r *Raft) boradcastAppend() {
-	for peer, _ := range r.Prs {
+	for peer := range r.Prs {
 		if peer != r.id {
 			r.sendAppend(peer)
 		}
@@ -622,14 +622,14 @@ func (r *Raft) boradcastAppend() {
 
 func (r *Raft) appendEntries(ents ...*pb.Entry) bool {
 	off := r.RaftLog.LastIndex()
-	for i, _ := range ents { // complete the index and term
+	for i := range ents { // complete the index and term
 		ents[i].Term = r.Term
 		ents[i].Index = (off) + 1
 		off += 1
 	}
 	r.RaftLog.appendEntries(ents...)
 	r.Prs[r.id].Match = off
-	for peer, _ := range r.Prs {
+	for peer := range r.Prs {
 		r.Prs[peer].Next = off + 1 // update peer's next to check func sendappend's type(log match or log append)
 	}
 	r.maybeCommit() // for only one peer
@@ -639,7 +639,7 @@ func (r *Raft) appendEntries(ents ...*pb.Entry) bool {
 // use median of match to find committed Index
 func (r *Raft) maybeCommit() bool {
 	matchs := make([]uint64, 0, len(r.Prs))
-	for peer, _ := range r.Prs {
+	for peer := range r.Prs {
 		matchs = append(matchs, r.Prs[peer].Match)
 	}
 	sort.Slice(matchs, func(i, j int) bool { return matchs[i] < matchs[j] })

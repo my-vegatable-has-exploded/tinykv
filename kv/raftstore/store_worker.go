@@ -40,7 +40,7 @@ func newStoreState(cfg *config.Config) (chan<- message.Msg, *storeState) {
 	return (chan<- message.Msg)(ch), state
 }
 
-// storeWorker runs store commands.
+// storeWorker runs store commands. // Note@wy recieve from router.sendstore
 type storeWorker struct {
 	*storeState
 	ctx *GlobalContext

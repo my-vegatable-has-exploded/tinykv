@@ -84,7 +84,7 @@ func (m *storeMeta) getOverlapRegions(region *metapb.Region) []*metapb.Region {
 	return overlaps
 }
 
-type GlobalContext struct {
+type GlobalContext struct { // Note@wy Gobal env
 	cfg                  *config.Config
 	engine               *engine_util.Engines
 	store                *metapb.Store
@@ -266,6 +266,7 @@ func (bs *Raftstore) startWorkers(peers []*peer) {
 	workers := bs.workers
 	router := bs.router
 	bs.wg.Add(2) // raftWorker, storeWorker
+	// Note@wy raftworker & storeworker init
 	rw := newRaftWorker(ctx, router)
 	go rw.run(bs.closeCh, bs.wg)
 	sw := newStoreWorker(ctx, bs.storeState)

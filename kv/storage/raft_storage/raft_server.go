@@ -151,7 +151,7 @@ func (rs *RaftStorage) Reader(ctx *kvrpcpb.Context) (storage.StorageReader, erro
 
 func (rs *RaftStorage) Raft(stream tinykvpb.TinyKv_RaftServer) error {
 	for {
-		msg, err := stream.Recv()
+		msg, err := stream.Recv() //Note@wy recviece stream
 		if err != nil {
 			return err
 		}
@@ -179,7 +179,7 @@ func (rs *RaftStorage) Start() error {
 	if err != nil {
 		return err
 	}
-	rs.raftRouter, rs.raftSystem = raftstore.CreateRaftstore(cfg)
+	rs.raftRouter, rs.raftSystem = raftstore.CreateRaftstore(cfg) //Note@wy init a Raftstore
 
 	rs.resolveWorker = worker.NewWorker("resolver", &rs.wg)
 	resolveSender := rs.resolveWorker.Sender()

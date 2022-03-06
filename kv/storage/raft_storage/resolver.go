@@ -13,6 +13,7 @@ import (
 
 // Handle will resolve t's storeID into the address of the TinyKV node which should handle t. t's callback is then
 // called with that address.
+// Note@wy cached id->addr
 func (r *resolverRunner) Handle(t worker.Task) {
 	data := t.(*resolveAddrTask)
 	data.callback(r.getAddr(data.storeID))

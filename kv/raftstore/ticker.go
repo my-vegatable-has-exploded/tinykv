@@ -123,7 +123,7 @@ func (r *tickDriver) stop() {
 func (r *tickDriver) tickStore() {
 	r.storeTicker.tickClock()
 	for i := range r.storeTicker.schedules {
-		if r.storeTicker.isOnStoreTick(StoreTick(i)) {
+		if r.storeTicker.isOnStoreTick(StoreTick(i)) { // Note@wy may need snapgc etc..
 			r.router.sendStore(message.NewMsg(message.MsgTypeStoreTick, StoreTick(i)))
 		}
 	}
