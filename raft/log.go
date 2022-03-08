@@ -16,7 +16,8 @@ package raft
 
 import (
 	"fmt"
-	"log"
+
+	log "github.com/pingcap-incubator/tinykv/log"
 
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
@@ -90,6 +91,7 @@ func newLog(storage Storage) *RaftLog {
 			panic(err)
 		}
 	}
+	log.Debugf("new raft log %+v %+v %+v \n", lo, hi, ents)
 
 	return &RaftLog{
 		storage:         storage,
@@ -192,6 +194,7 @@ func (l *RaftLog) findConflictByTerm(index uint64, term uint64) uint64 {
 	} else {
 		for { // find a last entry i, which i<=index &&  term(i)<=term
 			logTerm, err := l.Term(index)
+			log.Debugf("find conflict %+v %+v  m.term %+v\n", index, logTerm, term)
 			if logTerm <= term || err != nil {
 				break
 			}
@@ -205,7 +208,7 @@ func (l *RaftLog) findConflictByTerm(index uint64, term uint64) uint64 {
 // handle append message to check append
 func (l *RaftLog) maybeAppend(index, logTerm, committed uint64, ents ...*pb.Entry) (lastnewi uint64, ok bool) {
 	// ti, _ := l.Term(index)
-	// log.Printf("%v %v\n", ti, logTerm)
+	// log.Debugf("%v %v\n", ti, logTerm)
 	if l.zeroTermOnErrCompacted(l.Term(index)) == logTerm {
 		if len(ents) == 0 { // need to commmit
 			l.commitTo(min(committed, index)) // don't not use lastIndex, it may not sync with leader
@@ -248,6 +251,12 @@ func (l *RaftLog) maybeAppend(index, logTerm, committed uint64, ents ...*pb.Entr
 
 func (l *RaftLog) appendEntries(ents ...*pb.Entry) uint64 {
 	// l.entries = append(l.entries, ents...)
+	if len(ents) == 0 {
+		return l.LastIndex()
+	}
+	for i := l.LastIndex() + 1; i < ents[0].Index; i += 1 { // padding empty entry , because initIndex=5
+		l.entries = append(l.entries, pb.Entry{Index: i})
+	}
 	for _, ent := range ents {
 		l.entries = append(l.entries, *ent)
 	}
@@ -279,9 +288,10 @@ func (l *RaftLog) maybeCommit(committedIndex uint64, term uint64) bool {
 func (l *RaftLog) commitTo(committed uint64) {
 	if l.committed < committed {
 		if l.LastIndex() < committed {
-			log.Printf("Committed position %+v is out of range of entry.\n", committed)
+			log.Debugf("Committed position %+v is out of range of entry.\n", committed)
 		}
 		l.committed = committed
+		log.Debugf("commit to %+v , log: %+v", l.committed, l.entries)
 	}
 	// how to update in stabled storage ? Todo@wy
 }
@@ -291,7 +301,7 @@ func (l *RaftLog) applyTo(applied uint64) {
 		return // filter nil?
 	}
 	if l.committed < applied || l.applied > applied {
-		log.Printf("applied(%d) is out of range [prevApplied(%d), committed(%d)]", applied, l.applied, l.committed)
+		log.Infof("applied(%d) is out of range [prevApplied(%d), committed(%d)]", applied, l.applied, l.committed)
 	}
 	l.applied = applied
 }

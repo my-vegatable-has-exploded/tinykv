@@ -31,6 +31,7 @@ require (
 	golang.org/x/net v0.0.0-20211015210444-4f30a5c0130f
 	golang.org/x/sys v0.0.0-20220209214540-3681064d5158 // indirect
 	golang.org/x/tools v0.1.9 // indirect
+	google.golang.org/genproto v0.0.0-20190927181202-20e1ac93f88c
 	google.golang.org/grpc v1.25.1
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 )

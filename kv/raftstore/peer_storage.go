@@ -308,22 +308,20 @@ func ClearMeta(engines *engine_util.Engines, kvWB, raftWB *engine_util.WriteBatc
 // never be committed
 func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.WriteBatch) error {
 	// Your Code Here (2B).
-	firstIndex := entries[0].Index
+	// firstIndex := entries[0].Index
 	l := len(entries)
 	// lastIndex:=entries[l-1].Index
 	preIndex := ps.raftState.LastIndex
 	for _, ent := range entries {
-		if ent.Index <= preIndex {
-			continue
-		}
 		raftWB.SetMeta(meta.RaftLogKey(ps.region.Id, ent.Index), &ent)
 	}
-	for i := preIndex + 1; i < firstIndex; i += 1 { //Note@wy don't know the true mean
+	for i := entries[l-1].Index + 1; i <= preIndex; i += 1 { //Note@wy the append entry may not cover all entry have storage, like pre ... now ... pre, we need to cut the tail of pre entry.
 		raftWB.DeleteMeta(meta.RaftLogKey(ps.region.Id, i))
 	}
-	raftWB.WriteToDB(ps.Engines.Raft)
+	// raftWB.WriteToDB(ps.Engines.Raft)
 	ps.raftState.LastIndex = entries[l-1].Index // Note@wy need to update lastLogIndex & lastLogTerm
 	ps.raftState.LastTerm = entries[l-1].Term
+	// raftWB = &engine_util.WriteBatch{}
 	return nil
 }
 
@@ -349,10 +347,11 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 	// Your Code Here (2B/2C).
 	raftWb := &engine_util.WriteBatch{}
 	kvWb := &engine_util.WriteBatch{}
-	var snapResult *ApplySnapResult
-	var err error
+	var snapResult *ApplySnapResult = nil
+	var err error = nil
 	if len(ready.Entries) > 0 {
 		err = ps.Append(ready.Entries, raftWb)
+		raftWb.WriteToDB(ps.Engines.Raft)
 		if err != nil {
 			return snapResult, err
 		}

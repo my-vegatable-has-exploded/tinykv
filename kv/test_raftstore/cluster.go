@@ -191,10 +191,15 @@ func (c *Cluster) Request(key []byte, reqs []*raft_cmdpb.Request, timeout time.D
 		if resp == nil {
 			// it should be timeouted innerly
 			SleepMS(100)
+			log.Infof("case %+v, reason: %+v\n", i, resp.String())
+			// Panic("case %+v, reason: %+v\n", i, resp.String())
+			panic(nil)
 			continue
 		}
 		if resp.Header.Error != nil {
 			SleepMS(100)
+			log.Infof("case %+v, reason: %+v\n", i, resp.Header)
+			// log.Panicf("case %+v, reason: %+v\n", i, resp.Header)
 			continue
 		}
 		return resp, txn

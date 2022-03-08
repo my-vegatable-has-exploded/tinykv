@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"sort"
 
+	"github.com/pingcap-incubator/tinykv/log"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -300,6 +301,7 @@ func (r *Raft) becomeCandidate() {
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
+	log.Debugf("%+v become leader\n", r.id)
 	r.resetTick()
 	r.Lead = r.id
 	r.State = StateLeader
@@ -332,9 +334,9 @@ func (r *Raft) logSync() {
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
-	// if m.MsgType == pb.MessageType_MsgAppend || m.MsgType == pb.MessageType_MsgAppendResponse || m.MsgType == pb.MessageType_MsgHup {
-	// 	log.Printf(" id: %+v   step %+v", r.id, m)
-	// }
+	if m.MsgType == pb.MessageType_MsgAppend || m.MsgType == pb.MessageType_MsgAppendResponse || m.MsgType == pb.MessageType_MsgHup {
+		log.Debugf(" id: %+v   step %+v", r.id, m)
+	}
 
 	// Firstly, compare the term of message with raft.term
 	switch {
@@ -479,6 +481,7 @@ func (r *Raft) stepCandidate(m pb.Message) error {
 func (r *Raft) stepLeader(m pb.Message) error {
 	switch m.MsgType {
 	case pb.MessageType_MsgPropose:
+		// log.Info("%+vsend propose %+v\n", r.id, m.Entries)
 		if len(m.Entries) == 0 {
 			return errors.New("Empty propose message.")
 		}
@@ -504,8 +507,13 @@ func (r *Raft) stepLeader(m pb.Message) error {
 			if m.LogTerm > 0 {
 				nextProbeIndex = r.RaftLog.findConflictByTerm(nextProbeIndex, m.LogTerm)
 			}
-			if nextProbeIndex < pr.Next {
-				pr.Next = nextProbeIndex
+
+			if nextProbeIndex == m.Index && m.LogTerm == r.RaftLog.zeroTermOnErrCompacted(r.RaftLog.Term(nextProbeIndex)) { // may match this time
+				pr.Match = nextProbeIndex
+				pr.Next = pr.Match + 1
+				r.sendAppend(m.From)
+			} else if nextProbeIndex+1 < pr.Next {
+				pr.Next = max(1, min(nextProbeIndex+1, m.Index)) // use nextProbeIndex+1, because nextProbeIndex may match
 				r.sendAppend(m.From)
 			}
 		} else {
@@ -562,6 +570,7 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		})
 	} else {
 		hintIndex := min(m.Index, r.RaftLog.LastIndex())
+		log.Debugf("%+v recevie from %+v hint %+v", r.id, m.From, hintIndex)
 		hintIndex = r.RaftLog.findConflictByTerm(hintIndex, m.LogTerm)
 		hintTerm, err := r.RaftLog.Term(hintIndex)
 		if err != nil {
@@ -585,29 +594,47 @@ func (r *Raft) sendAppend(to uint64) bool {
 	// Your Code Here (2A).
 	pr := r.Prs[to]
 	nexti := pr.Next
-	if pr.Next != pr.Match+1 { // if not match, need to match log and append log entry
-		nexti = pr.Match + 1
-	}
+	// if pr.Next != pr.Match+1 { // if not match, need to match log and append log entry
+	// 	nexti = pr.Match + 1
+	// 	if pr.Match == 0 {
+	// 		// first time to append, because initStoreLogTerm=5 in tinykv
+	// 		log.Infof("to=%v %v %v %v", to, pr.Next, r.RaftLog.LastIndex(), ents)
+	// 		// if len(ents) != 0 {
+	// 		r.msgs = append(r.msgs, pb.Message{
+	// 			MsgType: pb.MessageType_MsgAppend,
+	// 			From:    r.id,
+	// 			To:      to,
+	// 			Term:    r.Term,
+	// 			Entries: make([]*pb.Entry,0),
+	// 			Index:   r.RaftLog.storage.FirstIndex(),
+	// 			LogTerm: nextTerm,
+	// 			Commit:  r.RaftLog.committed, // update peer's committed
+	// 		})
+	// 		return true
+	// 	}
+	// }
+	nexti = max(nexti, 1)                       // Todo@wy if nexti is 0 append all
 	nextTerm, errt := r.RaftLog.Term(nexti - 1) //Todo@wy handle -1
 	ents, erre := r.RaftLog.getEntries(nexti, r.RaftLog.LastIndex()+1)
 	if errt != nil || erre != nil {
-		// log.Printf("error test")
+		log.Warnf("error find term or entry")
 		// send snapshot
-	} else {
-		// log.Printf("to=%v %v %v %v", to, pr.Next, r.RaftLog.LastIndex(), ents)
-		// if len(ents) != 0 {
-		r.msgs = append(r.msgs, pb.Message{
-			MsgType: pb.MessageType_MsgAppend,
-			From:    r.id,
-			To:      to,
-			Term:    r.Term,
-			Entries: ents,
-			Index:   nexti - 1,
-			LogTerm: nextTerm,
-			Commit:  r.RaftLog.committed, // update peer's committed
-		})
-		// }
+		return false
 	}
+
+	log.Debugf("leader: %+v to=%v pr:%+v logs:%+v %v nexti%v logterm%v\n", r.id, to, pr, r.RaftLog.entries, ents, nexti-1, nextTerm)
+	// if len(ents) != 0 {
+	r.msgs = append(r.msgs, pb.Message{
+		MsgType: pb.MessageType_MsgAppend,
+		From:    r.id,
+		To:      to,
+		Term:    r.Term,
+		Entries: ents,
+		Index:   nexti - 1,
+		LogTerm: nextTerm,
+		Commit:  r.RaftLog.committed, // update peer's committed
+	})
+	// }
 
 	return true
 }
@@ -621,17 +648,24 @@ func (r *Raft) boradcastAppend() {
 }
 
 func (r *Raft) appendEntries(ents ...*pb.Entry) bool {
+	// n := len(ents)
 	off := r.RaftLog.LastIndex()
+
 	for i := range ents { // complete the index and term
-		ents[i].Term = r.Term
-		ents[i].Index = (off) + 1
+		if ents[i].Term == 0 || ents[i].Index == 0 {
+			ents[i].Term = r.Term
+			ents[i].Index = (off) + 1
+			// log.Debugf("term %v, index %v", ents[i].Term, ents[i].Index)
+		}
 		off += 1
 	}
+	// Todo@wy some entry Index and term already init by peer_msg_handle
 	r.RaftLog.appendEntries(ents...)
-	r.Prs[r.id].Match = off
 	for peer := range r.Prs {
-		r.Prs[peer].Next = off + 1 // update peer's next to check func sendappend's type(log match or log append)
+		r.Prs[peer].Next = off // update peer's next to check func sendappend's type(log match or log append)
 	}
+	r.Prs[r.id].Match = off
+	r.Prs[r.id].Next = r.Prs[r.id].Match + 1
 	r.maybeCommit() // for only one peer
 	return true
 }
