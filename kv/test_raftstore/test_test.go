@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	_ "net/http/pprof"
-	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -194,7 +193,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 	for i := 0; i < nclients; i++ {
 		clnts[i] = make(chan int, 1)
 	}
-	for i := 0; i < 1; i++ {
+	for i := 0; i < 3; i++ {
 		// log.Printf("Iteration %v\n", i)
 		atomic.StoreInt32(&done_clients, 0)
 		atomic.StoreInt32(&done_partitioner, 0)
@@ -286,6 +285,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 				key := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", k)
 				cluster.MustDelete([]byte(key))
 			}
+			log.Infof("Done for client %+v\n", cli)
 		}
 
 		if maxraftlog > 0 {
@@ -332,7 +332,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 
 func TestBasic2B(t *testing.T) {
 	// Test: one client (2B) ...
-	os.Setenv("LOG_LEVEL", "warning")
+	// os.Setenv("LOG_LEVEL", "info")
 	GenericTest(t, "2B", 1, false, false, false, -1, false, false)
 }
 

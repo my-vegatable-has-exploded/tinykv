@@ -112,7 +112,7 @@ func (d *peerMsgHandler) applyEntry(e eraftpb.Entry, cb *message.Callback) {
 		Responses: resps,
 	}
 	if cb == nil {
-		log.Warn("call back is nil")
+		log.Warnf("Index %+v Term %+v call back is nil", e.Index, e.Term)
 	} else {
 		cb.Done(cmdResp)
 	}
@@ -151,19 +151,19 @@ func (d *peerMsgHandler) HandleRaftReady() {
 		for _, ent := range rd.CommittedEntries {
 			for len(d.proposals) > 0 && pi < ent.Index {
 				d.proposals[0].cb.Done(ErrResp(&util.ErrStaleCommand{}))
-				if len(d.proposals) > 1 {
-					d.proposals = d.proposals[1:]
+				d.proposals = d.proposals[1:]
+				if len(d.proposals) >= 1 { // Fix dead loop
 					pi = d.proposals[0].index
 				}
 			}
 			if len(d.proposals) == 0 || (pi != ent.Index || d.proposals[0].term != ent.Term) {
 				log.Warnf("Can't find callback for Index:%+v Term:%+v\n", ent.Index, ent.Term)
 				// panic(errors.Errorf("Can't find callback for Index:%+v Term:%+v\n", ent.Index, ent.Term))
-				if len(d.proposals) > 0 && pi <= ent.Index { // cut callback with smaller index
+				if len(d.proposals) > 0 && pi == ent.Index && d.proposals[0].term != ent.Term { // cut callback with smaller index
 					// d.proposals[0].cb.Done(ErrResp(&util.ErrStaleCommand{}))
 					NotifyStaleReq(ent.Term, d.proposals[0].cb)
-					if len(d.proposals) > 1 {
-						d.proposals = d.proposals[1:]
+					d.proposals = d.proposals[1:]
+					if len(d.proposals) >= 1 {
 						pi = d.proposals[0].index
 					}
 				}
@@ -172,6 +172,9 @@ func (d *peerMsgHandler) HandleRaftReady() {
 				d.applyEntry(ent, (d.proposals[0].cb))
 				log.Warnf("handle proposals %+v %+v\n", d.proposals[0].index, d.proposals[0].term)
 				d.proposals = d.proposals[1:]
+				if len(d.proposals) >= 1 {
+					pi = d.proposals[0].index
+				}
 			}
 		}
 	}
