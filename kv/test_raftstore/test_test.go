@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	_ "net/http/pprof"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -180,8 +181,8 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 	defer cluster.Shutdown()
 
 	electionTimeout := cfg.RaftBaseTickInterval * time.Duration(cfg.RaftElectionTimeoutTicks)
-	// Wait for leader election
-	time.Sleep(2 * electionTimeout)
+	// Wait for leader election use 4 times timeout
+	time.Sleep(4 * electionTimeout)
 
 	done_partitioner := int32(0)
 	done_confchanger := int32(0)
@@ -332,12 +333,12 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 
 func TestBasic2B(t *testing.T) {
 	// Test: one client (2B) ...
-	// os.Setenv("LOG_LEVEL", "info")
 	GenericTest(t, "2B", 1, false, false, false, -1, false, false)
 }
 
 func TestConcurrent2B(t *testing.T) {
 	// Test: many clients (2B) ...
+	os.Setenv("LOG_LEVEL", "debug")
 	GenericTest(t, "2B", 5, false, false, false, -1, false, false)
 }
 

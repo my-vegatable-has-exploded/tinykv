@@ -69,7 +69,7 @@ func (d *peerMsgHandler) applyEntry(e eraftpb.Entry, cb *message.Callback) {
 				}
 			case raft_cmdpb.CmdType_Put:
 				kvWb.SetCF(req.Put.Cf, req.Put.Key, req.Put.Value)
-				log.Warnf("write %+v %+v %+v\n", req.Put.Cf, req.Put.Key, req.Put.Value)
+				log.Debugf("write %+v %+v %+v\n", req.Put.Cf, req.Put.Key, req.Put.Value)
 				resp = raft_cmdpb.Response{
 					CmdType: raft_cmdpb.CmdType_Put,
 					Put:     &raft_cmdpb.PutResponse{},
@@ -111,7 +111,7 @@ func (d *peerMsgHandler) applyEntry(e eraftpb.Entry, cb *message.Callback) {
 		Header:    &header,
 		Responses: resps,
 	}
-	if cb == nil {
+	if cb == nil && d.peer.RaftGroup.Raft.State == raft.StateLeader {
 		log.Warnf("Index %+v Term %+v call back is nil", e.Index, e.Term)
 	} else {
 		cb.Done(cmdResp)
@@ -142,39 +142,36 @@ func (d *peerMsgHandler) HandleRaftReady() {
 	if len(rd.Messages) > 0 {
 		d.Send(d.ctx.trans, rd.Messages)
 	}
-	var pi uint64 = 0
-	if len(d.proposals) > 0 {
-		pi = d.proposals[0].index
-		// log.Warnf("first proposals %+v %+v\n", d.proposals[0].index, d.proposals[0].term)
-	}
 	if len(rd.CommittedEntries) > 0 {
 		for _, ent := range rd.CommittedEntries {
-			for len(d.proposals) > 0 && pi < ent.Index {
+			for len(d.proposals) > 0 && d.proposals[0].index < ent.Index {
 				d.proposals[0].cb.Done(ErrResp(&util.ErrStaleCommand{}))
 				d.proposals = d.proposals[1:]
-				if len(d.proposals) >= 1 { // Fix dead loop
-					pi = d.proposals[0].index
-				}
 			}
-			if len(d.proposals) == 0 || (pi != ent.Index || d.proposals[0].term != ent.Term) {
-				log.Warnf("Can't find callback for Index:%+v Term:%+v\n", ent.Index, ent.Term)
-				// panic(errors.Errorf("Can't find callback for Index:%+v Term:%+v\n", ent.Index, ent.Term))
-				if len(d.proposals) > 0 && pi == ent.Index && d.proposals[0].term != ent.Term { // cut callback with smaller index
+			if len(d.proposals) == 0 || d.proposals[0].index != ent.Index || d.proposals[0].term != ent.Term {
+				var cbFind *(message.Callback)
+				if len(d.proposals) > 0 && d.proposals[0].index == ent.Index && d.proposals[0].term != ent.Term {
+					// cut callback with smaller index
 					// d.proposals[0].cb.Done(ErrResp(&util.ErrStaleCommand{}))
-					NotifyStaleReq(ent.Term, d.proposals[0].cb)
-					d.proposals = d.proposals[1:]
-					if len(d.proposals) >= 1 {
-						pi = d.proposals[0].index
+					// NotifyStaleReq(ent.Term, d.proposals[0].cb)
+					// d.proposals = d.proposals[1:]
+					// if len(d.proposals) >= 1 {
+					// 	pi = d.proposals[0].index
+					// }
+					dl := len(d.proposals)
+					for di := 0; di < dl && d.proposals[di].index == ent.Index; di += 1 {
+						if d.proposals[di].term == ent.Term {
+							cbFind = d.proposals[di].cb
+							d.proposals = append(d.proposals[:di], d.proposals[di+1:]...)
+							break
+						}
 					}
 				}
-				d.applyEntry(ent, nil)
+				d.applyEntry(ent, cbFind)
 			} else {
 				d.applyEntry(ent, (d.proposals[0].cb))
-				log.Warnf("handle proposals %+v %+v\n", d.proposals[0].index, d.proposals[0].term)
+				log.Debugf("handle proposals %+v %+v\n", d.proposals[0].index, d.proposals[0].term)
 				d.proposals = d.proposals[1:]
-				if len(d.proposals) >= 1 {
-					pi = d.proposals[0].index
-				}
 			}
 		}
 	}
@@ -190,7 +187,7 @@ func (d *peerMsgHandler) HandleMsg(msg message.Msg) {
 		}
 	case message.MsgTypeRaftCmd:
 		raftCMD := msg.Data.(*message.MsgRaftCmd)
-		log.Infof("region: %+v store: %+v raftCmd: %+v\n", d.regionId, d.storeID(), raftCMD)
+		log.Debugf("region: %+v store: %+v raftCmd: %+v\n", d.regionId, d.storeID(), raftCMD)
 		d.proposeRaftCommand(raftCMD.Request, raftCMD.Callback)
 	case message.MsgTypeTick:
 		d.onTick()
@@ -255,7 +252,16 @@ func (d *peerMsgHandler) handleNormalRequest(msg *raft_cmdpb.RaftCmdRequest, cb 
 	}
 	prId := d.nextProposalIndex()
 	prTerm := d.Term()
-	log.Warnf("peer %+v handle proposal index %+v, term %+v", d.storeID(), prId, prTerm)
+	log.Debugf("peer %+v handle proposal index %+v, term %+v", d.storeID(), prId, prTerm)
+	if l := len(d.proposals); l > 0 {
+		if prId <= d.proposals[l-1].index {
+			prInfo := ""
+			for _, pr := range d.proposals {
+				prInfo += fmt.Sprintf("index %+v, term %+v    ", pr.index, pr.term)
+			}
+			prInfo += fmt.Sprintf("index %+v, term %+v    ", prId, prTerm)
+			log.Warnf("Index of callback don't increasing, callbacks %+v\n", prInfo) }
+	}
 	d.proposals = append(d.proposals, &proposal{
 		index: prId,
 		term:  prTerm,
@@ -324,8 +330,6 @@ func (d *peerMsgHandler) ScheduleCompactLog(truncatedIndex uint64) {
 }
 
 func (d *peerMsgHandler) onRaftMsg(msg *rspb.RaftMessage) error {
-	log.Infof("%s handle raft message %s from %d to %d",
-		d.Tag, msg.GetMessage().GetMsgType(), msg.GetFromPeer().GetId(), msg.GetToPeer().GetId())
 	if !d.validateRaftMessage(msg) {
 		return nil
 	}

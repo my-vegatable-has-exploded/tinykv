@@ -545,6 +545,7 @@ func (r *Raft) boradcastHeartbeat() {
 // handleAppendEntries handle AppendEntries RPC request
 func (r *Raft) handleAppendEntries(m pb.Message) {
 	// Your Code Here (2A).
+	r.resetTick()                      // Note@wy need to reset tick , fix big bug
 	if m.Index < r.RaftLog.committed { // already commit, return directly
 		r.msgs = append(r.msgs, pb.Message{
 			MsgType: pb.MessageType_MsgAppendResponse,
@@ -685,6 +686,7 @@ func (r *Raft) maybeCommit() bool {
 // handleHeartbeat handle Heartbeat RPC request
 func (r *Raft) handleHeartbeat(m pb.Message) {
 	// Your Code Here (2A).
+	r.resetTick()                // Note@wy need to reset tick , fix big bug
 	r.RaftLog.commitTo(m.Commit) // update committed
 	r.msgs = append(r.msgs, pb.Message{
 		MsgType: pb.MessageType_MsgHeartbeatResponse,

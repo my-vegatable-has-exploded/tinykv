@@ -69,29 +69,29 @@ project2ac:
 	$(GOTEST) ./raft -run 2AC
 
 project2b:
-	$(TEST_CLEAN)
-	$(GOTEST) ./kv/test_raftstore -run ^TestBasic2B$ || true
+	# $(TEST_CLEAN)
+	# $(GOTEST) ./kv/test_raftstore -run ^TestBasic2B$ || true
 	$(TEST_CLEAN)
 	$(GOTEST) ./kv/test_raftstore -run ^TestConcurrent2B$ || true
 	$(TEST_CLEAN)
-	$(GOTEST) ./kv/test_raftstore -run ^TestUnreliable2B$ || true
-	$(TEST_CLEAN)
-	$(GOTEST) ./kv/test_raftstore -run ^TestOnePartition2B$ || true
-	$(TEST_CLEAN)
-	$(GOTEST) ./kv/test_raftstore -run ^TestManyPartitionsOneClient2B$ || true
-	$(TEST_CLEAN)
-	$(GOTEST) ./kv/test_raftstore -run ^TestManyPartitionsManyClients2B$ || true
-	$(TEST_CLEAN)
-	$(GOTEST) ./kv/test_raftstore -run ^TestPersistOneClient2B$ || true
-	$(TEST_CLEAN)
-	$(GOTEST) ./kv/test_raftstore -run ^TestPersistConcurrent2B$ || true
-	$(TEST_CLEAN)
-	$(GOTEST) ./kv/test_raftstore -run ^TestPersistConcurrentUnreliable2B$ || true
-	$(TEST_CLEAN)
-	$(GOTEST) ./kv/test_raftstore -run ^TestPersistPartition2B$ || true
-	$(TEST_CLEAN)
-	$(GOTEST) ./kv/test_raftstore -run ^TestPersistPartitionUnreliable2B$ || true
-	$(TEST_CLEAN)
+	# $(GOTEST) ./kv/test_raftstore -run ^TestUnreliable2B$ || true
+	# $(TEST_CLEAN)
+	# $(GOTEST) ./kv/test_raftstore -run ^TestOnePartition2B$ || true
+	# $(TEST_CLEAN)
+	# $(GOTEST) ./kv/test_raftstore -run ^TestManyPartitionsOneClient2B$ || true
+	# $(TEST_CLEAN)
+	# $(GOTEST) ./kv/test_raftstore -run ^TestManyPartitionsManyClients2B$ || true
+	# $(TEST_CLEAN)
+	# $(GOTEST) ./kv/test_raftstore -run ^TestPersistOneClient2B$ || true
+	# $(TEST_CLEAN)
+	# $(GOTEST) ./kv/test_raftstore -run ^TestPersistConcurrent2B$ || true
+	# $(TEST_CLEAN)
+	# $(GOTEST) ./kv/test_raftstore -run ^TestPersistConcurrentUnreliable2B$ || true
+	# $(TEST_CLEAN)
+	# $(GOTEST) ./kv/test_raftstore -run ^TestPersistPartition2B$ || true
+	# $(TEST_CLEAN)
+	# $(GOTEST) ./kv/test_raftstore -run ^TestPersistPartitionUnreliable2B$ || true
+	# $(TEST_CLEAN)
 
 project2c:
 	$(TEST_CLEAN)

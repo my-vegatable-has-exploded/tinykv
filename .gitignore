@@ -7,3 +7,4 @@ _tools
 /vendor
 tp.go
 log*.txt
+out/*
