@@ -334,9 +334,9 @@ func (r *Raft) logSync() {
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
-	if m.MsgType == pb.MessageType_MsgAppend || m.MsgType == pb.MessageType_MsgAppendResponse || m.MsgType == pb.MessageType_MsgHup {
-		log.Debugf(" id: %+v   step %+v", r.id, m)
-	}
+	// if m.MsgType == pb.MessageType_MsgAppend || m.MsgType == pb.MessageType_MsgAppendResponse || m.MsgType == pb.MessageType_MsgHup {
+	// 	log.Debugf(" id: %+v   step %+v", r.id, m)
+	// }
 
 	// Firstly, compare the term of message with raft.term
 	switch {
@@ -370,7 +370,7 @@ func (r *Raft) Step(m pb.Message) error {
 				Term:    r.Term,
 				Reject:  false,
 			})
-			r.Vote = m.From
+			r.becomeFollower(m.Term, m.From)  // need to reset state and tick
 		} else {
 			r.msgs = append(r.msgs, pb.Message{
 				MsgType: pb.MessageType_MsgRequestVoteResponse,
