@@ -88,10 +88,11 @@ func newLog(storage Storage) *RaftLog {
 	if lo <= hi {
 		ents, err = storage.Entries(lo, hi+1)
 		if err != nil {
+			log.Errorf("Recover entry fail from %+v to %+v because %+v\n", lo, hi, err)
 			panic(err)
 		}
 	}
-	log.Debugf("new raft log %+v %+v %+v \n", lo, hi, ents)
+	log.Debugf("new raft log %+v %+v \n", lo, hi)
 
 	return &RaftLog{
 		storage:         storage,
@@ -194,7 +195,7 @@ func (l *RaftLog) findConflictByTerm(index uint64, term uint64) uint64 {
 	} else {
 		for { // find a last entry i, which i<=index &&  term(i)<=term
 			logTerm, err := l.Term(index)
-			log.Debugf("find conflict %+v %+v  m.term %+v\n", index, logTerm, term)
+			// log.Debugf("find conflict %+v %+v  m.term %+v\n", index, logTerm, term)
 			if logTerm <= term || err != nil {
 				break
 			}
@@ -224,7 +225,7 @@ func (l *RaftLog) maybeAppend(index, logTerm, committed uint64, ents ...*pb.Entr
 			lastIndex := l.LastIndex()
 			if ent.Index <= lastIndex {
 				if l.zeroTermOnErrCompacted(l.Term(ent.Index)) == ent.Term {
-					l.stabled = max(l.committed, ent.Index)
+					l.stabled = min(max(l.committed, ent.Index), preStabled)
 					// l.applied = ent.Index
 				} else {
 					l.entries[ent.Index-l.offset] = *ent
@@ -234,6 +235,9 @@ func (l *RaftLog) maybeAppend(index, logTerm, committed uint64, ents ...*pb.Entr
 					modifyStabled = true
 				}
 			} else {
+				if ent.Index != l.LastIndex()+1 {
+					log.Errorf("Log is not sequential, lastindex %+v ent.index %+v\n", l.LastIndex(), ent.Index)
+				}
 				l.entries = append(l.entries, *ent)
 				modifyStabled = true
 			}
@@ -258,6 +262,9 @@ func (l *RaftLog) appendEntries(ents ...*pb.Entry) uint64 {
 		l.entries = append(l.entries, pb.Entry{Index: i})
 	}
 	for _, ent := range ents {
+		if ent.Index != l.LastIndex()+1 {
+			log.Errorf("Log is not sequential, lastindex %+v ent.index %+v\n", l.LastIndex(), ent.Index)
+		}
 		l.entries = append(l.entries, *ent)
 	}
 	return l.LastIndex()
@@ -291,7 +298,7 @@ func (l *RaftLog) commitTo(committed uint64) {
 			log.Debugf("Committed position %+v is out of range of entry.\n", committed)
 		}
 		l.committed = committed
-		log.Debugf("commit to %+v , log: %+v", l.committed, l.entries)
+		log.Debugf("commit to %+v", l.committed)
 	}
 	// how to update in stabled storage ? Todo@wy
 }
@@ -302,6 +309,7 @@ func (l *RaftLog) applyTo(applied uint64) {
 	}
 	if l.committed < applied || l.applied > applied {
 		log.Infof("applied(%d) is out of range [prevApplied(%d), committed(%d)]", applied, l.applied, l.committed)
+		return
 	}
 	l.applied = applied
 }
@@ -319,4 +327,16 @@ func (l *RaftLog) zeroTermOnErrCompacted(t uint64, err error) uint64 {
 	}
 	// log.Printf("unexpected error (%v)", err)
 	return 0
+}
+
+func (l *RaftLog) checkLogSequential() {
+	if n := len(l.entries); n > 0 {
+		preI := l.entries[0].Index
+		for i := 1; i < n; i += 1 {
+			if l.entries[i].Index != preI+1 {
+				log.Errorf("Log is not sequential, gap from %+v to %+v \n", preI, l.entries[i].Index)
+			}
+			preI = l.entries[i].Index
+		}
+	}
 }

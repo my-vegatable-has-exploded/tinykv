@@ -334,9 +334,9 @@ func (r *Raft) logSync() {
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
-	// if m.MsgType == pb.MessageType_MsgAppend || m.MsgType == pb.MessageType_MsgAppendResponse || m.MsgType == pb.MessageType_MsgHup {
-	// 	log.Debugf(" id: %+v   step %+v", r.id, m)
-	// }
+	if m.MsgType == pb.MessageType_MsgAppend || m.MsgType == pb.MessageType_MsgAppendResponse || m.MsgType == pb.MessageType_MsgHup {
+		log.Debugf(" id: %+v   step %+v", r.id, m)
+	}
 
 	// Firstly, compare the term of message with raft.term
 	switch {
@@ -370,7 +370,9 @@ func (r *Raft) Step(m pb.Message) error {
 				Term:    r.Term,
 				Reject:  false,
 			})
-			r.becomeFollower(m.Term, m.From)  // need to reset state and tick
+			// r.becomeFollower(m.Term, m.From) // need to reset state and tick
+			r.electionElapsed = 0
+			r.Vote = m.From // only need to change vote but not lead
 		} else {
 			r.msgs = append(r.msgs, pb.Message{
 				MsgType: pb.MessageType_MsgRequestVoteResponse,
@@ -623,7 +625,7 @@ func (r *Raft) sendAppend(to uint64) bool {
 		return false
 	}
 
-	log.Debugf("leader: %+v to=%v pr:%+v logs:%+v %v nexti%v logterm%v\n", r.id, to, pr, r.RaftLog.entries, ents, nexti-1, nextTerm)
+	// log.Debugf("leader: %+v to=%v pr:%+v logs:%+v %v nexti%v logterm%v\n", r.id, to, pr, r.RaftLog.entries, ents, nexti-1, nextTerm)
 	// if len(ents) != 0 {
 	r.msgs = append(r.msgs, pb.Message{
 		MsgType: pb.MessageType_MsgAppend,
@@ -653,11 +655,9 @@ func (r *Raft) appendEntries(ents ...*pb.Entry) bool {
 	off := r.RaftLog.LastIndex()
 
 	for i := range ents { // complete the index and term
-		if ents[i].Term == 0 || ents[i].Index == 0 {
-			ents[i].Term = r.Term
-			ents[i].Index = (off) + 1
-			// log.Debugf("term %v, index %v", ents[i].Term, ents[i].Index)
-		}
+		ents[i].Term = r.Term
+		ents[i].Index = (off) + 1
+		// log.Debugf("term %v, index %v", ents[i].Term, ents[i].Index)
 		off += 1
 	}
 	// Todo@wy some entry Index and term already init by peer_msg_handle
@@ -730,6 +730,10 @@ func (r *Raft) advance(rd Ready) {
 		r.RaftLog.applyTo(newApplied)
 	}
 	if n := len(rd.Entries); n > 0 {
+		if r.RaftLog.stabled+1 != rd.Entries[0].Index {
+			log.Errorf("Log is not sequential, lastindex %+v ent.index %+v\n", r.RaftLog.stabled, rd.Entries[0].Index)
+		}
 		r.RaftLog.stableTo(rd.Entries[n-1].Index)
+		// r.RaftLog.checkLogSequential()
 	}
 }

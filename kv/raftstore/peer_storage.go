@@ -113,6 +113,7 @@ func (ps *PeerStorage) Entries(low, high uint64) ([]eraftpb.Entry, error) {
 		}
 		// May meet gap or has been compacted.
 		if entry.Index != nextIndex {
+			log.Errorf("May meet gap or has been compacted entry.Index %+v nextIndex %+v\n", entry.Index, nextIndex)
 			break
 		}
 		nextIndex++
@@ -123,6 +124,7 @@ func (ps *PeerStorage) Entries(low, high uint64) ([]eraftpb.Entry, error) {
 		return buf, nil
 	}
 	// Here means we don't fetch enough entries.
+	log.Errorf("Error when get entry from %+v to %+v , buf size %+v\n", low, high, len(buf))
 	return nil, raft.ErrUnavailable
 }
 
@@ -323,6 +325,9 @@ func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.Write
 	if appendFirst < psFirst {
 		entries = entries[psFirst-appendFirst:]
 	}
+	if appendFirst > psLast+1 {
+		log.Errorf("Log is not sequential, appendFirst %+v psLast %+v\n", appendFirst, psLast)
+	}
 	// append raft log
 	for _, e := range entries {
 		raftWB.SetMeta(meta.RaftLogKey(ps.region.GetId(), e.Index), &e)
@@ -353,36 +358,8 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 	// and send RegionTaskApply task to region worker through ps.regionSched, also remember call ps.clearMeta
 	// and ps.clearExtraData to delete stale data
 	// Your Code Here (2C).
-	// delete stale data
-	if ps.isInitialized() {
-		if err := ps.clearMeta(kvWB, raftWB); err != nil {
-			return nil, err
-		}
-		ps.clearExtraData(snapData.Region)
-	}
-	// update states
-	ps.raftState.LastIndex = snapshot.Metadata.Index
-	ps.raftState.LastTerm = snapshot.Metadata.Term
-	ps.applyState.AppliedIndex = snapshot.Metadata.Index
-	ps.applyState.TruncatedState.Index = snapshot.Metadata.Index
-	ps.applyState.TruncatedState.Term = snapshot.Metadata.Term
-	ps.snapState.StateType = snap.SnapState_Applying
-	kvWB.SetMeta(meta.ApplyStateKey(snapData.Region.GetId()), ps.applyState)
-	// send RegionTaskApply and wait
-	ch := make(chan bool, 1)
-	ps.regionSched <- &runner.RegionTaskApply{
-		RegionId: ps.region.GetId(),
-		Notifier: ch,
-		SnapMeta: snapshot.Metadata,
-		StartKey: snapData.Region.GetStartKey(),
-		EndKey:   snapData.Region.GetEndKey(),
-	}
-	result := &ApplySnapResult{
-		PrevRegion: ps.region,
-		Region:     snapData.Region,
-	}
-	meta.WriteRegionState(kvWB, snapData.Region, rspb.PeerState_Normal)
-	return result, nil
+
+	return nil, nil
 }
 
 // Save memory states to disk.

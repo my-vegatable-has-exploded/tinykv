@@ -239,6 +239,7 @@ func (c *Cluster) CallCommandOnLeader(request *raft_cmdpb.RaftCmdRequest, timeou
 				leader = newLeader
 				log.Debugf("use new leader %d of region %d", leader.GetId(), regionID)
 			}
+			// SleepMS(100) // sleep for leader election
 			continue
 		}
 		if resp.Header.Error != nil {
@@ -250,6 +251,7 @@ func (c *Cluster) CallCommandOnLeader(request *raft_cmdpb.RaftCmdRequest, timeou
 				} else {
 					leader = c.LeaderOfRegion(regionID)
 				}
+				// SleepMS(100) // sleep for leader election
 				continue
 			}
 		}

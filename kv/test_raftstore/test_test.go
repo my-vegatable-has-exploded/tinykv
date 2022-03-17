@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	_ "net/http/pprof"
-	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -144,6 +143,7 @@ func confchanger(t *testing.T, cluster *Cluster, ch chan bool, done *int32) {
 // - If confchange is set, the cluster will schedule random conf change concurrently.
 // - If split is set, split region when size exceed 1024 bytes.
 func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash bool, partitions bool, maxraftlog int, confchange bool, split bool) {
+	// os.Setenv("LOG_LEVEL", "debug")
 	title := "Test: "
 	if unreliable {
 		// the network drops RPC requests and replies.
@@ -338,7 +338,6 @@ func TestBasic2B(t *testing.T) {
 
 func TestConcurrent2B(t *testing.T) {
 	// Test: many clients (2B) ...
-	os.Setenv("LOG_LEVEL", "debug")
 	GenericTest(t, "2B", 5, false, false, false, -1, false, false)
 }
 
