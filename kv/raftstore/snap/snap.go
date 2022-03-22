@@ -626,7 +626,7 @@ func (s *Snap) TotalSize() (total uint64) {
 	return
 }
 
-func (s *Snap) Save() error {
+func (s *Snap) Save() error { // Note@wy save snapshot?
 	log.Debugf("saving to %s", s.MetaFile.Path)
 	for _, cfFile := range s.CFFiles {
 		if cfFile.Size == 0 {

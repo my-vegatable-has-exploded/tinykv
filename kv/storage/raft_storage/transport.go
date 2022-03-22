@@ -66,7 +66,7 @@ func (t *ServerTransport) Resolve(storeID uint64, msg *raft_serverpb.RaftMessage
 }
 
 func (t *ServerTransport) WriteData(storeID uint64, addr string, msg *raft_serverpb.RaftMessage) {
-	if msg.GetMessage().GetSnapshot() != nil {
+	if msg.GetMessage().GetSnapshot() != nil { // Note@wy snapshot ready transport send snapshot
 		t.SendSnapshotSock(addr, msg)
 		return
 	}
@@ -76,14 +76,14 @@ func (t *ServerTransport) WriteData(storeID uint64, addr string, msg *raft_serve
 }
 
 func (t *ServerTransport) SendSnapshotSock(addr string, msg *raft_serverpb.RaftMessage) {
-	callback := func(err error) {
+	callback := func(err error) { // Note@wy Init msg header
 		regionID := msg.GetRegionId()
 		toPeerID := msg.GetToPeer().GetId()
 		toStoreID := msg.GetToPeer().GetStoreId()
 		log.Debugf("send snapshot. toPeerID: %v, toStoreID: %v, regionID: %v, status: %v", toPeerID, toStoreID, regionID, err)
 	}
 
-	t.snapScheduler <- &sendSnapTask{
+	t.snapScheduler <- &sendSnapTask{ // Note@wy sendTask to snap_runner
 		addr:     addr,
 		msg:      msg,
 		callback: callback,

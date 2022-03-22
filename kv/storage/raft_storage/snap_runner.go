@@ -122,7 +122,7 @@ func (r *snapRunner) sendSnap(addr string, msg *raft_serverpb.RaftMessage) error
 func (r *snapRunner) recv(t *recvSnapTask) {
 	msg, err := r.recvSnap(t.stream)
 	if err == nil {
-		r.router.SendRaftMessage(msg)
+		r.router.SendRaftMessage(msg) //Note@wy Handle received snapshot and send to peerstorage
 	}
 	t.callback(err)
 }

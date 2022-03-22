@@ -162,7 +162,7 @@ func (rs *RaftStorage) Raft(stream tinykvpb.TinyKv_RaftServer) error {
 func (rs *RaftStorage) Snapshot(stream tinykvpb.TinyKv_SnapshotServer) error {
 	var err error
 	done := make(chan struct{})
-	rs.snapWorker.Sender() <- &recvSnapTask{
+	rs.snapWorker.Sender() <- &recvSnapTask{ // Note@wy server recivie snapshot
 		stream: stream,
 		callback: func(e error) {
 			err = e

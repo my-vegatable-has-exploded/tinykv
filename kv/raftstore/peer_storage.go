@@ -189,7 +189,7 @@ func (ps *PeerStorage) Snapshot() (eraftpb.Snapshot, error) {
 		Receiver:  ch,
 	}
 	// schedule snapshot generate task
-	ps.regionSched <- &runner.RegionTaskGen{
+	ps.regionSched <- &runner.RegionTaskGen{ // Note@wy send Snapshot generating task to runner
 		RegionId: ps.region.GetId(),
 		Notifier: ch,
 	}
@@ -358,8 +358,55 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 	// and send RegionTaskApply task to region worker through ps.regionSched, also remember call ps.clearMeta
 	// and ps.clearExtraData to delete stale data
 	// Your Code Here (2C).
+	snapIndex := snapshot.Metadata.Index
+	snapTerm := snapshot.Metadata.Term
+	if ps.applyState.TruncatedState.Index >= snapIndex {
+		return nil, errors.New("No need to snapshot\n")
+	}
+	ch := make(chan bool, 1)
+	// ps.snapState = snap.SnapState{
+	// 	StateType: snap.SnapState_Applying,
+	// 	Receiver:  ch,
+	// }
+	ps.regionSched <- &runner.RegionTaskApply{
+		RegionId: snapData.Region.Id,
+		Notifier: ch,
+		SnapMeta: snapshot.Metadata,
+		StartKey: snapData.Region.StartKey,
+		EndKey:   snapData.Region.EndKey,
+	}
+	if resp := <-ch; resp {
+		if ps.isInitialized() {
+			if err := ps.clearMeta(kvWB, raftWB); err != nil {
+				return nil, err
+			}
+			ps.clearExtraData(snapData.Region)
+		}
+		ps.applyState.TruncatedState.Index = snapIndex
+		ps.applyState.TruncatedState.Term = snapTerm
+		ps.applyState.AppliedIndex = max(snapIndex, ps.applyState.AppliedIndex)
+		ps.raftState.LastIndex = max(snapIndex, ps.raftState.LastIndex)
+		ps.raftState.LastTerm = max(snapTerm, ps.raftState.LastTerm)
+		kvWB.SetMeta(meta.ApplyStateKey(snapData.Region.Id), ps.applyState)
+		regionState := new(rspb.RegionLocalState)
+		regionState.State = rspb.PeerState_Normal
+		regionState.Region = snapData.Region
+		kvWB.SetMeta(meta.RegionStateKey(snapData.Region.Id), regionState)
+		res := &ApplySnapResult{
+			PrevRegion: ps.region,
+			Region:     snapData.Region,
+		}
+		return res, nil
+	} else {
+		return nil, errors.New("RegionTaskApply failed")
+	}
+}
 
-	return nil, nil
+func max(a, b uint64) uint64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // Save memory states to disk.

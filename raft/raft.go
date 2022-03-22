@@ -310,9 +310,10 @@ func (r *Raft) becomeLeader() {
 	for peer, p := range r.Prs {                  // init prs's state
 		if peer == r.id {
 			p.Match = lastIndex
-		} else {
-			p.Match = 0
 		}
+		// else {
+		// 	p.Match = 0
+		// }
 		p.Next = lastIndex + 1
 	}
 	r.appendEntries(&pb.Entry{ // append cause leader's  progress change
@@ -334,9 +335,9 @@ func (r *Raft) logSync() {
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
-	if m.MsgType == pb.MessageType_MsgAppend || m.MsgType == pb.MessageType_MsgAppendResponse || m.MsgType == pb.MessageType_MsgHup {
-		log.Debugf(" id: %+v   step %+v", r.id, m)
-	}
+	// if m.MsgType == pb.MessageType_MsgAppend || m.MsgType == pb.MessageType_MsgAppendResponse || m.MsgType == pb.MessageType_MsgHup {
+	log.Debugf(" id: %+v   step %+v", r.id, m)
+	// }
 
 	// Firstly, compare the term of message with raft.term
 	switch {
@@ -447,6 +448,10 @@ func (r *Raft) stepFollower(m pb.Message) error {
 		r.electionElapsed = 0
 		r.Lead = m.From
 		r.handleAppendEntries(m)
+	case pb.MessageType_MsgSnapshot:
+		r.electionElapsed = 0
+		r.Lead = m.From
+		r.handleSnapshot(m)
 	}
 	return nil
 }
@@ -620,9 +625,9 @@ func (r *Raft) sendAppend(to uint64) bool {
 	nextTerm, errt := r.RaftLog.Term(nexti - 1) //Todo@wy handle -1
 	ents, erre := r.RaftLog.getEntries(nexti, r.RaftLog.LastIndex()+1)
 	if errt != nil || erre != nil {
-		log.Warnf("error find term or entry")
+		log.Debugf("error find term or entry")
 		// send snapshot
-		return false
+		return r.sendSnapshot(to)
 	}
 
 	// log.Debugf("leader: %+v to=%v pr:%+v logs:%+v %v nexti%v logterm%v\n", r.id, to, pr, r.RaftLog.entries, ents, nexti-1, nextTerm)
@@ -662,9 +667,9 @@ func (r *Raft) appendEntries(ents ...*pb.Entry) bool {
 	}
 	// Todo@wy some entry Index and term already init by peer_msg_handle
 	r.RaftLog.appendEntries(ents...)
-	for peer := range r.Prs {
-		r.Prs[peer].Next = off // update peer's next to check func sendappend's type(log match or log append)
-	}
+	// for peer := range r.Prs {
+	// 	r.Prs[peer].Next = off // update peer's next to check func sendappend's type(log match or log append)
+	// }
 	r.Prs[r.id].Match = off
 	r.Prs[r.id].Next = r.Prs[r.id].Match + 1
 	r.maybeCommit() // for only one peer
@@ -687,7 +692,7 @@ func (r *Raft) maybeCommit() bool {
 func (r *Raft) handleHeartbeat(m pb.Message) {
 	// Your Code Here (2A).
 	r.resetTick()                // Note@wy need to reset tick , fix big bug
-	r.RaftLog.commitTo(m.Commit) // update committed
+	r.RaftLog.commitTo(m.Commit) // Todo@wy update committed , but how to promise log snyc already finished?
 	r.msgs = append(r.msgs, pb.Message{
 		MsgType: pb.MessageType_MsgHeartbeatResponse,
 		From:    r.id,
@@ -698,6 +703,69 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 // handleSnapshot handle Snapshot RPC request
 func (r *Raft) handleSnapshot(m pb.Message) {
 	// Your Code Here (2C).
+	snap := m.Snapshot
+	if r.restore(snap) {
+		r.msgs = append(r.msgs, pb.Message{
+			MsgType: pb.MessageType_MsgAppendResponse,
+			From:    r.id,
+			To:      m.From,
+			Index:   r.RaftLog.LastIndex(),
+		})
+	} else {
+		r.msgs = append(r.msgs, pb.Message{
+			MsgType: pb.MessageType_MsgAppendResponse,
+			From:    r.id,
+			To:      m.From,
+			Index:   r.RaftLog.committed,
+		})
+	}
+}
+
+func (r *Raft) restore(s *pb.Snapshot) bool {
+
+	if s.Metadata.Index <= r.RaftLog.committed {
+		return false
+	}
+	if r.RaftLog.matchTerm(s.Metadata.Index, s.Metadata.Term) {
+		log.Infof("%x [commit: %d, lastindex: %d, lastterm: %d] fast-forwarded commit to snapshot [index: %d, term: %d]",
+			r.id, r.RaftLog.committed, r.RaftLog.LastIndex(), r.RaftLog.LastTerm(), s.Metadata.Index, s.Metadata.Term)
+
+		r.RaftLog.commitTo(s.Metadata.Index)
+		return false
+	}
+	r.RaftLog.commitTo(s.Metadata.Index)
+	r.RaftLog.pendingSnapshot = s
+	for _, peer := range s.Metadata.ConfState.Nodes {
+		if _, ok := r.Prs[peer]; !ok {
+			r.Prs[peer] = &Progress{}
+		}
+	}
+	return true
+}
+
+func (r *Raft) sendSnapshot(to uint64) bool {
+	snap, err := r.RaftLog.storage.Snapshot()
+	if err != nil {
+		if err == ErrSnapshotTemporarilyUnavailable {
+			log.Debugf("%x failed to send snapshot to %x because snapshot is temporarily unavailable", r.id, to)
+			return false
+		}
+		panic(err)
+	}
+	if IsEmptySnap(&snap) {
+		// panic("need non-empty snapshot")
+		// return false
+
+	}
+	r.msgs = append(r.msgs, pb.Message{
+		MsgType:  pb.MessageType_MsgSnapshot,
+		To:       to,
+		From:     r.id,
+		Term:     r.Term,
+		Commit:   r.RaftLog.committed,
+		Snapshot: &snap,
+	})
+	return true
 }
 
 // addNode add a new node to raft group

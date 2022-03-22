@@ -242,7 +242,20 @@ func (d *peerMsgHandler) preProposeRaftCommand(req *raft_cmdpb.RaftCmdRequest) e
 }
 
 func (d *peerMsgHandler) handleAdminRequest(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
-
+	req := msg.AdminRequest
+	switch req.CmdType {
+	case raft_cmdpb.AdminCmdType_CompactLog:
+		compactReq := req.CompactLog
+		compactIndex := compactReq.CompactIndex
+		compactTerm := compactReq.CompactTerm
+		d.peer.peerStorage.applyState.TruncatedState.Index = compactIndex
+		d.peer.peerStorage.applyState.TruncatedState.Term = compactTerm
+		err := engine_util.PutMeta(d.peer.peerStorage.Engines.Kv, meta.ApplyStateKey(d.regionId), d.peer.peerStorage.applyState)
+		if err != nil {
+			log.Error(err)
+		}
+		d.ScheduleCompactLog(compactIndex)
+	}
 }
 
 func (d *peerMsgHandler) handleNormalRequest(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
@@ -260,7 +273,8 @@ func (d *peerMsgHandler) handleNormalRequest(msg *raft_cmdpb.RaftCmdRequest, cb 
 				prInfo += fmt.Sprintf("index %+v, term %+v    ", pr.index, pr.term)
 			}
 			prInfo += fmt.Sprintf("index %+v, term %+v    ", prId, prTerm)
-			log.Warnf("Index of callback don't increasing, callbacks %+v\n", prInfo) }
+			log.Warnf("Index of callback don't increasing, callbacks %+v\n", prInfo)
+		}
 	}
 	d.proposals = append(d.proposals, &proposal{
 		index: prId,
@@ -326,7 +340,7 @@ func (d *peerMsgHandler) ScheduleCompactLog(truncatedIndex uint64) {
 		EndIdx:     truncatedIndex + 1,
 	}
 	d.LastCompactedIdx = raftLogGCTask.EndIdx
-	d.ctx.raftLogGCTaskSender <- raftLogGCTask
+	d.ctx.raftLogGCTaskSender <- raftLogGCTask // Note@wy
 }
 
 func (d *peerMsgHandler) onRaftMsg(msg *rspb.RaftMessage) error {
@@ -599,7 +613,7 @@ func (d *peerMsgHandler) onRaftGCLogTick() {
 
 	// Create a compact log request and notify directly.
 	regionID := d.regionId
-	request := newCompactLogRequest(regionID, d.Meta, compactIdx, term)
+	request := newCompactLogRequest(regionID, d.Meta, compactIdx, term) // Note@wy send snapRequest commmand
 	d.proposeRaftCommand(request, nil)
 }
 

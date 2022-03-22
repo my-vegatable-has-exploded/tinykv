@@ -63,7 +63,7 @@ func (pr *router) send(regionID uint64, msg message.Msg) error {
 	if p == nil || atomic.LoadUint32(&p.closed) == 1 {
 		return errPeerNotFound
 	}
-	pr.peerSender <- msg
+	pr.peerSender <- msg //Note@wy send to raft_worker
 	return nil
 }
 

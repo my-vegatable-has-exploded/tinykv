@@ -110,6 +110,12 @@ func newLog(storage Storage) *RaftLog {
 // grow unlimitedly in memory
 func (l *RaftLog) maybeCompact() {
 	// Your Code Here (2C).
+	truncatedi, _ := l.storage.FirstIndex()
+	l.entries = l.entries[min(uint64(len(l.entries)), truncatedi-l.offset):]
+	l.offset = truncatedi
+	l.stabled = max(l.stabled, truncatedi)
+	l.commitTo(truncatedi)
+	l.applyTo(truncatedi)
 }
 
 // unstableEntries return all the unstable entries
@@ -129,7 +135,7 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) { // Todo@wy where to limit commi
 		off = max(off, l.pendingSnapshot.Metadata.Index+1)
 	}
 	if l.committed >= off {
-		return l.entries[off-l.offset : min(uint64(len(l.entries)+1), l.committed-l.offset+1)]
+		return l.entries[off-l.offset : min(uint64(len(l.entries)), l.committed-l.offset+1)]
 	}
 	return make([]pb.Entry, 0)
 }
@@ -161,7 +167,7 @@ func (l *RaftLog) LastTerm() uint64 {
 }
 
 // Term return the term of the entry in the given index
-func (l *RaftLog) Term(i uint64) (uint64, error) { //Todo@wy handle -1
+func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
 	if len := len(l.entries); len > 0 && i >= l.offset {
 		if i < l.offset+uint64(len) {
@@ -219,7 +225,7 @@ func (l *RaftLog) maybeAppend(index, logTerm, committed uint64, ents ...*pb.Entr
 		modifyStabled := false
 		// l.applied = min(l.applied, ents[0].Index-1)
 		l.stabled = min(l.stabled, ents[0].Index-1)
-		// TODO@wy may not true , I don't think TestFollowerAppendEntries2AB make sense.
+		// Todo@wy may not true , I don't think TestFollowerAppendEntries2AB make sense.
 		// entries may occur situation like pre...| now... | pre... and may need to modify the value of stabled
 		for _, ent := range ents {
 			lastIndex := l.LastIndex()
@@ -327,6 +333,14 @@ func (l *RaftLog) zeroTermOnErrCompacted(t uint64, err error) uint64 {
 	}
 	// log.Printf("unexpected error (%v)", err)
 	return 0
+}
+
+func (l *RaftLog) matchTerm(index, term uint64) bool {
+	t, err := l.Term(index)
+	if err != nil {
+		return false
+	}
+	return t == term
 }
 
 func (l *RaftLog) checkLogSequential() {
