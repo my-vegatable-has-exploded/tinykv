@@ -105,6 +105,7 @@ func (d *peerMsgHandler) applyEntry(e eraftpb.Entry, cb *message.Callback) {
 	}
 	if msg.AdminRequest != nil {
 		// Todo@wy handle AdminRequest
+		d.applyAdminRequest(msg, nil)
 	}
 	header := raft_cmdpb.RaftResponseHeader{}
 	cmdResp := &raft_cmdpb.RaftCmdResponse{
@@ -118,6 +119,24 @@ func (d *peerMsgHandler) applyEntry(e eraftpb.Entry, cb *message.Callback) {
 	}
 	d.peerStorage.applyState.AppliedIndex = index
 	engine_util.PutMeta(d.peerStorage.Engines.Kv, meta.ApplyStateKey(d.regionId), d.peerStorage.applyState) // Note@wy modify in kv not in raft
+}
+
+func (d *peerMsgHandler) applyAdminRequest(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
+	req := msg.AdminRequest
+	switch req.CmdType {
+	case raft_cmdpb.AdminCmdType_CompactLog:
+		compactReq := msg.AdminRequest.CompactLog
+		compactIndex := compactReq.CompactIndex
+		compactTerm := compactReq.CompactTerm
+		d.peer.peerStorage.applyState.TruncatedState.Index = compactIndex
+		d.peer.peerStorage.applyState.TruncatedState.Term = compactTerm
+		err := engine_util.PutMeta(d.peer.peerStorage.Engines.Kv, meta.ApplyStateKey(d.regionId), d.peer.peerStorage.applyState)
+		log.Debugf("RegionId %+v peer %+v handle to TruncatedState.Index %+v \n", d.regionId, d.peer.PeerId(), compactIndex)
+		if err != nil {
+			log.Error(err)
+		}
+		d.ScheduleCompactLog(compactIndex)
+	}
 }
 
 func (d *peerMsgHandler) HandleRaftReady() {
@@ -242,20 +261,31 @@ func (d *peerMsgHandler) preProposeRaftCommand(req *raft_cmdpb.RaftCmdRequest) e
 }
 
 func (d *peerMsgHandler) handleAdminRequest(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
-	req := msg.AdminRequest
-	switch req.CmdType {
-	case raft_cmdpb.AdminCmdType_CompactLog:
-		compactReq := req.CompactLog
-		compactIndex := compactReq.CompactIndex
-		compactTerm := compactReq.CompactTerm
-		d.peer.peerStorage.applyState.TruncatedState.Index = compactIndex
-		d.peer.peerStorage.applyState.TruncatedState.Term = compactTerm
-		err := engine_util.PutMeta(d.peer.peerStorage.Engines.Kv, meta.ApplyStateKey(d.regionId), d.peer.peerStorage.applyState)
-		if err != nil {
-			log.Error(err)
-		}
-		d.ScheduleCompactLog(compactIndex)
+	data, err := msg.Marshal()
+	if err != nil {
+		panic(err)
 	}
+	if cb != nil {
+		prId := d.nextProposalIndex()
+		prTerm := d.Term()
+		log.Debugf("peer %+v handle proposal index %+v, term %+v", d.storeID(), prId, prTerm)
+		if l := len(d.proposals); l > 0 {
+			if prId <= d.proposals[l-1].index {
+				prInfo := ""
+				for _, pr := range d.proposals {
+					prInfo += fmt.Sprintf("index %+v, term %+v    ", pr.index, pr.term)
+				}
+				prInfo += fmt.Sprintf("index %+v, term %+v    ", prId, prTerm)
+				log.Warnf("Index of callback don't increasing, callbacks %+v\n", prInfo)
+			}
+		}
+		d.proposals = append(d.proposals, &proposal{
+			index: prId,
+			term:  prTerm,
+			cb:    cb,
+		})
+	}
+	d.peer.RaftGroup.Propose(data)
 }
 
 func (d *peerMsgHandler) handleNormalRequest(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
@@ -263,24 +293,26 @@ func (d *peerMsgHandler) handleNormalRequest(msg *raft_cmdpb.RaftCmdRequest, cb 
 	if err != nil {
 		panic(err)
 	}
-	prId := d.nextProposalIndex()
-	prTerm := d.Term()
-	log.Debugf("peer %+v handle proposal index %+v, term %+v", d.storeID(), prId, prTerm)
-	if l := len(d.proposals); l > 0 {
-		if prId <= d.proposals[l-1].index {
-			prInfo := ""
-			for _, pr := range d.proposals {
-				prInfo += fmt.Sprintf("index %+v, term %+v    ", pr.index, pr.term)
+	if cb != nil {
+		prId := d.nextProposalIndex()
+		prTerm := d.Term()
+		log.Debugf("peer %+v handle proposal index %+v, term %+v", d.storeID(), prId, prTerm)
+		if l := len(d.proposals); l > 0 {
+			if prId <= d.proposals[l-1].index {
+				prInfo := ""
+				for _, pr := range d.proposals {
+					prInfo += fmt.Sprintf("index %+v, term %+v    ", pr.index, pr.term)
+				}
+				prInfo += fmt.Sprintf("index %+v, term %+v    ", prId, prTerm)
+				log.Warnf("Index of callback don't increasing, callbacks %+v\n", prInfo)
 			}
-			prInfo += fmt.Sprintf("index %+v, term %+v    ", prId, prTerm)
-			log.Warnf("Index of callback don't increasing, callbacks %+v\n", prInfo)
 		}
+		d.proposals = append(d.proposals, &proposal{
+			index: prId,
+			term:  prTerm,
+			cb:    cb,
+		})
 	}
-	d.proposals = append(d.proposals, &proposal{
-		index: prId,
-		term:  prTerm,
-		cb:    cb,
-	})
 	d.peer.RaftGroup.Propose(data)
 }
 
@@ -340,7 +372,7 @@ func (d *peerMsgHandler) ScheduleCompactLog(truncatedIndex uint64) {
 		EndIdx:     truncatedIndex + 1,
 	}
 	d.LastCompactedIdx = raftLogGCTask.EndIdx
-	d.ctx.raftLogGCTaskSender <- raftLogGCTask // Note@wy
+	d.ctx.raftLogGCTaskSender <- raftLogGCTask // Note@wy send GcLogTask to gc runner
 }
 
 func (d *peerMsgHandler) onRaftMsg(msg *rspb.RaftMessage) error {
