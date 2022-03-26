@@ -238,6 +238,10 @@ func (r *Raft) sendVoteRequest(to uint64) {
 	})
 }
 
+func (r *Raft) abortLeaderTransferee() {
+	r.leadTransferee = None
+}
+
 // tick advances the internal logical clock by a single tick.
 func (r *Raft) tick() {
 	// Your Code Here (2A).
@@ -253,11 +257,18 @@ func (r *Raft) tick() {
 		}
 	case StateLeader:
 		r.heartbeatElapsed += 1
+		r.electionElapsed += 1
 		if r.heartbeatElapsed >= r.heartbeatTimeout {
 			r.heartbeatElapsed = 0
 			// r.boradcastHeartbeat()
 			if err := r.Step(pb.Message{MsgType: pb.MessageType_MsgBeat, From: r.id}); err != nil {
 				panic(err)
+			}
+		}
+		if r.electionElapsed >= r.electionTimeout {
+			r.electionElapsed = 0
+			if r.State == StateLeader && r.leadTransferee != None {
+				r.abortLeaderTransferee()
 			}
 		}
 	}
@@ -276,7 +287,7 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.Term = term
 	r.Lead = lead
 	r.Vote = lead
-
+	r.leadTransferee = None
 	// r.leadTransferee = None // TODO@wy: to test
 	// Your Code Here (2A).
 }
@@ -305,6 +316,7 @@ func (r *Raft) becomeLeader() {
 	r.resetTick()
 	r.Lead = r.id
 	r.State = StateLeader
+	r.leadTransferee = None
 
 	lastIndex, _ := r.RaftLog.storage.LastIndex() // need done before append, because appendEntries change leader's match and next
 	for peer, p := range r.Prs {                  // init prs's state
@@ -335,6 +347,9 @@ func (r *Raft) logSync() {
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
+	if _, ok := r.Prs[r.id]; !ok {
+		return nil
+	}
 	// if m.MsgType == pb.MessageType_MsgAppend || m.MsgType == pb.MessageType_MsgAppendResponse || m.MsgType == pb.MessageType_MsgHup {
 	log.Debugf(" id: %+v   step %+v", r.id, m)
 	// }
@@ -452,6 +467,15 @@ func (r *Raft) stepFollower(m pb.Message) error {
 		r.electionElapsed = 0
 		r.Lead = m.From
 		r.handleSnapshot(m)
+	case pb.MessageType_MsgTransferLeader:
+		if r.Lead == None {
+			log.Infof("%x no leader at term %d; dropping leader transfer to %+v msg", r.id, r.Term, m.From)
+			return nil
+		}
+		m.To = r.Lead
+		r.msgs = append(r.msgs, m)
+	case pb.MessageType_MsgTimeoutNow:
+		r.campaign()
 	}
 	return nil
 }
@@ -489,6 +513,10 @@ func (r *Raft) stepLeader(m pb.Message) error {
 	switch m.MsgType {
 	case pb.MessageType_MsgPropose:
 		// log.Info("%+vsend propose %+v\n", r.id, m.Entries)
+		if r.leadTransferee != None {
+			log.Debugf("%x [term %d] transfer leadership to %x is in progress; dropping proposal", r.id, r.Term, r.leadTransferee)
+			return ErrProposalDropped
+		}
 		if len(m.Entries) == 0 {
 			return errors.New("Empty propose message.")
 		}
@@ -536,6 +564,34 @@ func (r *Raft) stepLeader(m pb.Message) error {
 					r.sendAppend(m.From)
 				}
 			}
+			if r.Prs[m.From].Match == r.RaftLog.LastIndex() && r.leadTransferee == m.From {
+				r.sendTimeout(r.leadTransferee)
+			}
+		}
+	case pb.MessageType_MsgTransferLeader:
+		newTransferLeader := m.From
+		if _, ok := r.Prs[newTransferLeader]; !ok {
+			log.Debugf("Peer don't exit in %+v for leader transfering to %+v\n", r.id, newTransferLeader)
+			return nil // Todo@wy some error ?
+		}
+		lastTransferLeader := r.leadTransferee
+		if lastTransferLeader != None {
+			if newTransferLeader == lastTransferLeader {
+				log.Debugf("%x [term %d] transfer leadership to %x is in progress, ignores request to same node %x",
+					r.id, r.Term, newTransferLeader, lastTransferLeader)
+				return nil
+			}
+			r.abortLeaderTransferee()
+		}
+		if newTransferLeader == r.id {
+			return nil
+		}
+		r.leadTransferee = newTransferLeader
+		r.electionElapsed = 0
+		if r.Prs[newTransferLeader].Match == r.RaftLog.LastIndex() {
+			r.sendTimeout(newTransferLeader)
+		} else {
+			r.sendAppend(newTransferLeader)
 		}
 	}
 	return nil
@@ -547,6 +603,15 @@ func (r *Raft) boradcastHeartbeat() {
 			r.sendHeartbeat(peer)
 		}
 	}
+}
+
+func (r *Raft) sendTimeout(to uint64) {
+	r.msgs = append(r.msgs, pb.Message{
+		MsgType: pb.MessageType_MsgTimeoutNow,
+		From:    r.id,
+		To:      to,
+		Term:    r.Term,
+	})
 }
 
 // handleAppendEntries handle AppendEntries RPC request
@@ -678,6 +743,9 @@ func (r *Raft) appendEntries(ents ...*pb.Entry) bool {
 
 // use median of match to find committed Index
 func (r *Raft) maybeCommit() bool {
+	if len(r.Prs) == 0 {
+		return false
+	}
 	matchs := make([]uint64, 0, len(r.Prs))
 	for peer := range r.Prs {
 		matchs = append(matchs, r.Prs[peer].Match)
@@ -771,11 +839,23 @@ func (r *Raft) sendSnapshot(to uint64) bool {
 // addNode add a new node to raft group
 func (r *Raft) addNode(id uint64) {
 	// Your Code Here (3A).
+	if _, ok := r.Prs[id]; !ok {
+		r.Prs[id] = &Progress{
+			Match: 0,
+			Next:  0,
+		}
+	}
 }
 
 // removeNode remove a node from raft group
 func (r *Raft) removeNode(id uint64) {
 	// Your Code Here (3A).
+	if _, ok := r.Prs[id]; ok {
+		delete(r.Prs, id)
+		if r.State == StateLeader {
+			r.maybeCommit()
+		}
+	}
 }
 
 func (r *Raft) softState() *SoftState {
