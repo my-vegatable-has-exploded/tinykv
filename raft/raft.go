@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"sort"
 
+	"github.com/pingcap-incubator/tinykv/kv/raftstore/util"
 	"github.com/pingcap-incubator/tinykv/log"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
@@ -288,6 +289,7 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.Lead = lead
 	r.Vote = lead
 	r.leadTransferee = None
+	r.PendingConfIndex = None
 	// r.leadTransferee = None // TODO@wy: to test
 	// Your Code Here (2A).
 }
@@ -303,6 +305,8 @@ func (r *Raft) becomeCandidate() {
 	r.denialCnt = 0
 	r.votes = make(map[uint64]bool)
 	r.votes[r.id] = true
+	r.leadTransferee = None
+	r.PendingConfIndex = None
 	// for peer := range r.Prs {
 	// 	r.sendVoteRequest(peer)
 	// }
@@ -317,6 +321,7 @@ func (r *Raft) becomeLeader() {
 	r.Lead = r.id
 	r.State = StateLeader
 	r.leadTransferee = None
+	r.PendingConfIndex = None
 
 	lastIndex, _ := r.RaftLog.storage.LastIndex() // need done before append, because appendEntries change leader's match and next
 	for peer, p := range r.Prs {                  // init prs's state
@@ -347,7 +352,7 @@ func (r *Raft) logSync() {
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
-	if _, ok := r.Prs[r.id]; !ok {
+	if _, ok := r.Prs[r.id]; !ok && !util.IsInitialMsg(&m) { // Note@wy initialMsg don't need to promise r.id in prs
 		return nil
 	}
 	// if m.MsgType == pb.MessageType_MsgAppend || m.MsgType == pb.MessageType_MsgAppendResponse || m.MsgType == pb.MessageType_MsgHup {
@@ -724,7 +729,17 @@ func (r *Raft) appendEntries(ents ...*pb.Entry) bool {
 	// n := len(ents)
 	off := r.RaftLog.LastIndex()
 
-	for i := range ents { // complete the index and term
+	for i, ent := range ents { // complete the index and term
+		if ent.EntryType == pb.EntryType_EntryConfChange {
+			if len(ents) != 1 {
+				log.Fatalf("Propose confchang, but the length of entry is %+v\n", len(ents))
+			}
+			if r.PendingConfIndex > r.RaftLog.applied {
+				return false
+			} else {
+				r.PendingConfIndex = off + 1
+			}
+		}
 		ents[i].Term = r.Term
 		ents[i].Index = (off) + 1
 		// log.Debugf("term %v, index %v", ents[i].Term, ents[i].Index)
@@ -803,7 +818,7 @@ func (r *Raft) restore(s *pb.Snapshot) bool {
 	}
 	r.RaftLog.commitTo(s.Metadata.Index)
 	r.RaftLog.pendingSnapshot = s
-	for _, peer := range s.Metadata.ConfState.Nodes {
+	for _, peer := range s.Metadata.ConfState.Nodes { // Note@wy update nodes from snapshot
 		if _, ok := r.Prs[peer]; !ok {
 			r.Prs[peer] = &Progress{}
 		}
@@ -845,6 +860,7 @@ func (r *Raft) addNode(id uint64) {
 			Next:  0,
 		}
 	}
+	r.PendingConfIndex = None
 }
 
 // removeNode remove a node from raft group
@@ -853,9 +869,15 @@ func (r *Raft) removeNode(id uint64) {
 	if _, ok := r.Prs[id]; ok {
 		delete(r.Prs, id)
 		if r.State == StateLeader {
-			r.maybeCommit()
+			if r.maybeCommit() {
+				r.boradcastAppend()
+			}
+		}
+		if r.State == StateLeader && r.leadTransferee == id {
+			r.abortLeaderTransferee()
 		}
 	}
+	r.PendingConfIndex = None
 }
 
 func (r *Raft) softState() *SoftState {

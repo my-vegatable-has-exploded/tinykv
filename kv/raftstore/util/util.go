@@ -25,7 +25,7 @@ const InvalidID uint64 = 0
 // Heartbeat message for the store of that peer to check whether to create a new peer
 // when receiving these messages, or just to wait for a pending region split to perform
 // later.
-func IsInitialMsg(msg *eraftpb.Message) bool {
+func IsInitialMsg(msg *eraftpb.Message) bool { // Note@wy where to create new peer
 	return msg.MsgType == eraftpb.MessageType_MsgRequestVote ||
 		// the peer has not been known to this leader, it may exist or not.
 		(msg.MsgType == eraftpb.MessageType_MsgHeartbeat && msg.Commit == RaftInvalidIndex)

@@ -186,7 +186,7 @@ func doSnapshot(engines *engine_util.Engines, mgr *snap.SnapManager, regionId ui
 
 	region := regionState.GetRegion()
 	confState := util.ConfStateFromRegion(region)
-	snapshot := &eraftpb.Snapshot{
+	snapshot := &eraftpb.Snapshot{ // Note@wy contain region information for initialing new peer
 		Metadata: &eraftpb.SnapshotMetadata{
 			Index:     key.Index,
 			Term:      key.Term,

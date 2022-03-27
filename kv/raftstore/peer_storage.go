@@ -391,7 +391,7 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 		regionState := new(rspb.RegionLocalState)
 		regionState.State = rspb.PeerState_Normal
 		regionState.Region = snapData.Region
-		kvWB.SetMeta(meta.RegionStateKey(snapData.Region.Id), regionState)
+		kvWB.SetMeta(meta.RegionStateKey(snapData.Region.Id), regionState) // Note@wy apply region state for snapshot , which is useful in initialing new peer.
 		res := &ApplySnapResult{
 			PrevRegion: ps.region,
 			Region:     snapData.Region,

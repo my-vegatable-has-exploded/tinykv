@@ -57,3 +57,4 @@ type RaftStorage struct {
 	}
 ```
 
+state注意在destory后不要修改
