@@ -209,6 +209,11 @@ func newRaft(c *Config) *Raft {
 		// leadTransferee: 0,
 		// PendingConfIndex: 0,
 	}
+	for _, ent := range raft.RaftLog.entries {
+		if ent.EntryType == pb.EntryType_EntryConfChange {
+			raft.PendingConfIndex = ent.Index
+		}
+	}
 	raft.becomeFollower(raft.Term, raft.Lead) // don't change persist Lead
 	return raft
 }

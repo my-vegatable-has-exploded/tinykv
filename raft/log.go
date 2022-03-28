@@ -115,7 +115,7 @@ func (l *RaftLog) maybeCompact() {
 	l.offset = truncatediP
 	l.stabled = max(l.stabled, truncatediP-1)
 	l.commitTo(truncatediP - 1)
-	l.applyTo(truncatediP - 1)
+	l.applyTo(max(truncatediP-1, l.applied))
 }
 
 // unstableEntries return all the unstable entries
