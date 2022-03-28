@@ -110,12 +110,12 @@ func newLog(storage Storage) *RaftLog {
 // grow unlimitedly in memory
 func (l *RaftLog) maybeCompact() {
 	// Your Code Here (2C).
-	truncatedi, _ := l.storage.FirstIndex()
-	l.entries = l.entries[min(uint64(len(l.entries)), truncatedi-l.offset):]
-	l.offset = truncatedi
-	l.stabled = max(l.stabled, truncatedi)
-	l.commitTo(truncatedi)
-	l.applyTo(truncatedi)
+	truncatediP, _ := l.storage.FirstIndex() // Note@wy l.storage.FirstIndex() return truncatedi+1
+	l.entries = l.entries[min(uint64(len(l.entries)), truncatediP-l.offset):]
+	l.offset = truncatediP
+	l.stabled = max(l.stabled, truncatediP-1)
+	l.commitTo(truncatediP - 1)
+	l.applyTo(truncatediP - 1)
 }
 
 // unstableEntries return all the unstable entries

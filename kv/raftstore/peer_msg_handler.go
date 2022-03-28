@@ -47,6 +47,7 @@ func (d *peerMsgHandler) applyEntry(e eraftpb.Entry, cb *message.Callback) {
 	// term := e.Term
 	data := e.Data
 	var cmdResp *raft_cmdpb.RaftCmdResponse
+	log.Debugf("Peer %+v apply entry %+v", d.PeerId(), e)
 	if e.EntryType == eraftpb.EntryType_EntryConfChange {
 		cc := &eraftpb.ConfChange{}
 		err := cc.Unmarshal(data)
@@ -73,8 +74,8 @@ func (d *peerMsgHandler) applyEntry(e eraftpb.Entry, cb *message.Callback) {
 	} else {
 		cb.Done(cmdResp)
 	}
-	if d.stopped{
-		return 
+	if d.stopped {
+		return
 	}
 	d.peerStorage.applyState.AppliedIndex = index
 	engine_util.PutMeta(d.peerStorage.Engines.Kv, meta.ApplyStateKey(d.regionId), d.peerStorage.applyState) // Note@wy modify in kv not in raft
@@ -196,9 +197,11 @@ func (d *peerMsgHandler) checkPeer(nodeId uint64) int {
 
 func (d *peerMsgHandler) addNode(req *raft_cmdpb.ChangePeerRequest) {
 	nodeId := req.Peer.Id
+	log.Debugf("Peer %+v prepare to add node %+v", d.PeerId(), nodeId)
 	// storeId := req.Peer.StoreId
 	peerIndex := d.checkPeer(nodeId)
 	if peerIndex != -1 {
+		log.Debugf("Nodeid %+v is exist in region's peer , don't need to add", nodeId)
 		return
 	}
 	d.peerStorage.region.RegionEpoch.ConfVer += 1
@@ -212,8 +215,10 @@ func (d *peerMsgHandler) addNode(req *raft_cmdpb.ChangePeerRequest) {
 
 func (d *peerMsgHandler) removeNode(req *raft_cmdpb.ChangePeerRequest) {
 	nodeId := req.Peer.Id
+	log.Debugf("Peer %+v prepare to remove node %+v", d.PeerId(), nodeId)
 	peerIndex := d.checkPeer(nodeId)
 	if peerIndex == -1 {
+		log.Debugf("Nodeid %+v is not exist in region's peer %+v , don't need to remove", nodeId, d.Region().Peers)
 		return
 	}
 	d.peerStorage.region.RegionEpoch.ConfVer += 1
@@ -237,12 +242,15 @@ func (d *peerMsgHandler) HandleRaftReady() {
 		return
 	}
 	rd := d.RaftGroup.Ready()
-	if d.RaftGroup.Raft.State == raft.StateLeader && len(rd.CommittedEntries) != 0 {
-		log.Debugf("%+v %+v handle ready:%+v\n", d.regionId, d.storeID(), rd)
-	}
+	log.Debugf("%+v %+v handle ready:%+v", d.regionId, d.storeID(), rd)
 	snapRes, err := d.peerStorage.SaveReadyState(&rd)
 	if snapRes != nil {
-		// Todo@wy
+		d.ctx.storeMeta.Lock()
+		defer d.ctx.storeMeta.Unlock()
+		delete(d.ctx.storeMeta.regions, snapRes.PrevRegion.Id)
+		d.ctx.storeMeta.regions[snapRes.Region.Id] = snapRes.Region // Note@wy need to update region infomation and regionId maybe change
+		d.ctx.storeMeta.regionRanges.Delete(&regionItem{region: snapRes.PrevRegion})
+		d.ctx.storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: snapRes.Region}) // Note@wy need to update regionRange
 	}
 	if err != nil {
 		log.Debug(err.Error())
@@ -252,7 +260,8 @@ func (d *peerMsgHandler) HandleRaftReady() {
 	}
 	if len(rd.CommittedEntries) > 0 {
 		for _, ent := range rd.CommittedEntries {
-			if d.stopped{
+			if d.stopped {
+				log.Debugf("Region %+v peer %+v have stopped", d.regionId, d.PeerId())
 				return
 			}
 			for len(d.proposals) > 0 && d.proposals[0].index < ent.Index {

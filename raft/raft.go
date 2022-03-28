@@ -352,7 +352,7 @@ func (r *Raft) logSync() {
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
-	if _, ok := r.Prs[r.id]; !ok && !util.IsInitialMsg(&m) { // Note@wy initialMsg don't need to promise r.id in prs
+	if _, ok := r.Prs[r.id]; !ok && !(util.IsInitialMsg(&m) || m.MsgType == pb.MessageType_MsgSnapshot) { // Note@wy initialMsg and initialSnapshot don't need to promise r.id in prs
 		return nil
 	}
 	// if m.MsgType == pb.MessageType_MsgAppend || m.MsgType == pb.MessageType_MsgAppendResponse || m.MsgType == pb.MessageType_MsgHup {

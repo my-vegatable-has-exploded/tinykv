@@ -421,6 +421,10 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 	if !raft.IsEmptySnap(&ready.Snapshot) {
 		kvWb := &engine_util.WriteBatch{}
 		result, err = ps.ApplySnapshot(&ready.Snapshot, kvWb, raftWB)
+		if err != nil {
+			log.Error(err)
+		}
+		ps.region = result.Region
 		log.Error(err)
 		kvWb.WriteToDB(ps.Engines.Kv)
 	}
