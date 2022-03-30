@@ -425,7 +425,6 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 			log.Error(err)
 		}
 		ps.region = result.Region
-		log.Error(err)
 		kvWb.WriteToDB(ps.Engines.Kv)
 	}
 	// store raft log

@@ -178,6 +178,9 @@ func (d *peerMsgHandler) applyConfChange(cc *eraftpb.ConfChange) *raft_cmdpb.Raf
 	if d.stopped {
 		return nil
 	} else {
+		if d.IsLeader() {
+			d.HeartbeatScheduler(d.ctx.schedulerTaskSender)
+		}
 		return &raft_cmdpb.RaftCmdResponse{
 			Header: &raft_cmdpb.RaftResponseHeader{},
 			AdminResponse: &raft_cmdpb.AdminResponse{
