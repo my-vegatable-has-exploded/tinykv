@@ -69,13 +69,13 @@ func (d *peerMsgHandler) applyEntry(e eraftpb.Entry, cb *message.Callback) {
 			d.applyAdminRequest(msg, cb)
 		}
 	}
+	if d.stopped {
+		return
+	}
 	if cb == nil && d.peer.RaftGroup.Raft.State == raft.StateLeader {
 		log.Warnf("Index %+v Term %+v call back is nil", e.Index, e.Term)
 	} else {
 		cb.Done(cmdResp)
-	}
-	if d.stopped {
-		return
 	}
 	d.peerStorage.applyState.AppliedIndex = index
 	engine_util.PutMeta(d.peerStorage.Engines.Kv, meta.ApplyStateKey(d.regionId), d.peerStorage.applyState) // Note@wy modify in kv not in raft
@@ -102,7 +102,7 @@ func (d *peerMsgHandler) applyNormalRequest(msg *raft_cmdpb.RaftCmdRequest, cb *
 			}
 		case raft_cmdpb.CmdType_Put:
 			kvWB.SetCF(req.Put.Cf, req.Put.Key, req.Put.Value)
-			log.Debugf("write %+v %+v %+v\n", req.Put.Cf, req.Put.Key, req.Put.Value)
+			log.Debugf("write %+v %+v %+v", req.Put.Cf, req.Put.Key, req.Put.Value)
 			resp = raft_cmdpb.Response{
 				CmdType: raft_cmdpb.CmdType_Put,
 				Put:     &raft_cmdpb.PutResponse{},
@@ -175,14 +175,18 @@ func (d *peerMsgHandler) applyConfChange(cc *eraftpb.ConfChange) *raft_cmdpb.Raf
 	case eraftpb.ConfChangeType_RemoveNode:
 		d.removeNode(req.AdminRequest.ChangePeer)
 	}
-	return &raft_cmdpb.RaftCmdResponse{
-		Header: &raft_cmdpb.RaftResponseHeader{},
-		AdminResponse: &raft_cmdpb.AdminResponse{
-			CmdType: raft_cmdpb.AdminCmdType_ChangePeer,
-			ChangePeer: &raft_cmdpb.ChangePeerResponse{
-				Region: d.peerStorage.region,
+	if d.stopped {
+		return nil
+	} else {
+		return &raft_cmdpb.RaftCmdResponse{
+			Header: &raft_cmdpb.RaftResponseHeader{},
+			AdminResponse: &raft_cmdpb.AdminResponse{
+				CmdType: raft_cmdpb.AdminCmdType_ChangePeer,
+				ChangePeer: &raft_cmdpb.ChangePeerResponse{
+					Region: d.peerStorage.region,
+				},
 			},
-		},
+		}
 	}
 }
 
@@ -246,24 +250,20 @@ func (d *peerMsgHandler) HandleRaftReady() {
 	snapRes, err := d.peerStorage.SaveReadyState(&rd)
 	if snapRes != nil {
 		d.ctx.storeMeta.Lock()
-		defer d.ctx.storeMeta.Unlock()
 		delete(d.ctx.storeMeta.regions, snapRes.PrevRegion.Id)
 		d.ctx.storeMeta.regions[snapRes.Region.Id] = snapRes.Region // Note@wy need to update region infomation and regionId maybe change
 		d.ctx.storeMeta.regionRanges.Delete(&regionItem{region: snapRes.PrevRegion})
 		d.ctx.storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: snapRes.Region}) // Note@wy need to update regionRange
+		d.ctx.storeMeta.Unlock()
 	}
 	if err != nil {
-		log.Debug(err.Error())
+		log.Error(err.Error())
 	}
 	if len(rd.Messages) > 0 {
 		d.Send(d.ctx.trans, rd.Messages)
 	}
 	if len(rd.CommittedEntries) > 0 {
 		for _, ent := range rd.CommittedEntries {
-			if d.stopped {
-				log.Debugf("Region %+v peer %+v have stopped", d.regionId, d.PeerId())
-				return
-			}
 			for len(d.proposals) > 0 && d.proposals[0].index < ent.Index {
 				d.proposals[0].cb.Done(ErrResp(&util.ErrStaleCommand{}))
 				d.proposals = d.proposals[1:]
@@ -290,8 +290,14 @@ func (d *peerMsgHandler) HandleRaftReady() {
 				d.applyEntry(ent, cbFind)
 			} else {
 				d.applyEntry(ent, (d.proposals[0].cb))
-				log.Debugf("handle proposals %+v %+v\n", d.proposals[0].index, d.proposals[0].term)
-				d.proposals = d.proposals[1:]
+				if !d.stopped {
+					log.Debugf("handle proposals %+v %+v\n", d.proposals[0].index, d.proposals[0].term)
+					d.proposals = d.proposals[1:]
+				}
+			}
+			if d.stopped {
+				log.Debugf("Region %+v peer %+v have stopped", d.regionId, d.PeerId())
+				return
 			}
 		}
 	}
@@ -381,7 +387,7 @@ func (d *peerMsgHandler) handleAdminRequest(msg *raft_cmdpb.RaftCmdRequest, cb *
 		})
 	case raft_cmdpb.AdminCmdType_ChangePeer:
 		// Todo@wy need to promise pendingConfIndex==0 ?
-		if d.RaftGroup.Raft.PendingConfIndex > d.peerStorage.AppliedIndex() {
+		if d.RaftGroup.Raft.PendingConfIndex != raft.None && d.RaftGroup.Raft.PendingConfIndex > d.peerStorage.AppliedIndex() {
 			cb.Done(ErrResp(raft.ErrProposalDropped))
 			return
 		}
@@ -408,11 +414,14 @@ func (d *peerMsgHandler) handleAdminRequest(msg *raft_cmdpb.RaftCmdRequest, cb *
 			term:  prTerm,
 			cb:    cb,
 		})
-		d.RaftGroup.ProposeConfChange(eraftpb.ConfChange{
+		err = d.RaftGroup.ProposeConfChange(eraftpb.ConfChange{
 			ChangeType: changeReq.ChangeType,
 			NodeId:     changeReq.Peer.Id,
 			Context:    ctx, // Note@wy need to append to log
 		})
+		if err != nil {
+			cb.Done(ErrResp(err))
+		}
 	}
 }
 

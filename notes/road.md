@@ -10,3 +10,8 @@
 
 对于异步的管道、goroutine等， 通常可以通过查询引用相关的new或start函数获取sender和receiver关系
 
+## 调试
+
+设置各种条件稳定复现, 通过log定位问题
+
+go defer作用域为协程
