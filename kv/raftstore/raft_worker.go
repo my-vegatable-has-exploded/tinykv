@@ -53,6 +53,7 @@ func (rw *raftWorker) run(closeCh <-chan struct{}, wg *sync.WaitGroup) {
 			}
 			newPeerMsgHandler(peerState.peer, rw.ctx).HandleMsg(msg) //Note@wy handle msg received from raft_worker
 		}
+		// Note@wy HandleRaftReady may don't get ready because need to wait raft for appendding and applying. So need to checkregion before apply. Checkregion for propose already done by peer_msg_handle.preProposeRaftCommand()
 		for _, peerState := range peerStateMap {
 			newPeerMsgHandler(peerState.peer, rw.ctx).HandleRaftReady()
 		}

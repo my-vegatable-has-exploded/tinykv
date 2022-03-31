@@ -61,18 +61,25 @@ func (d *peerMsgHandler) applyEntry(e eraftpb.Entry, cb *message.Callback) {
 		if err != nil {
 			panic(err)
 		}
-		if len(msg.Requests) > 0 {
-			cmdResp = d.applyNormalRequest(msg, cb)
-		}
-		if msg.AdminRequest != nil {
-			// Todo@wy handle AdminRequest
-			d.applyAdminRequest(msg, cb)
+		// Note@wy need to check region
+		// situation msg1 with region1 append to log, but need some to apply, if msg2 with region1 come to log before applying msg1, it still satisfy region request. When raft apply msg2, msg2's region don't match store's region.
+		err = util.CheckRegionEpoch(msg, d.Region(), true)
+		if errEpochNotMatching, ok := err.(*util.ErrEpochNotMatch); ok {
+			cmdResp = ErrResp(errEpochNotMatching)
+		} else {
+			if len(msg.Requests) > 0 {
+				cmdResp = d.applyNormalRequest(msg, cb)
+			}
+			if msg.AdminRequest != nil {
+				// Todo@wy handle AdminRequest
+				d.applyAdminRequest(msg, cb)
+			}
 		}
 	}
 	if d.stopped {
 		return
 	}
-	if cb == nil && d.peer.RaftGroup.Raft.State == raft.StateLeader {
+	if cb == nil && d.peer.RaftGroup.Raft.State == raft.StateLeader && cmdResp != nil {
 		log.Warnf("Index %+v Term %+v call back is nil", e.Index, e.Term)
 	} else {
 		cb.Done(cmdResp)
@@ -162,11 +169,16 @@ func (d *peerMsgHandler) applyAdminRequest(msg *raft_cmdpb.RaftCmdRequest, cb *m
 }
 
 func (d *peerMsgHandler) applyConfChange(cc *eraftpb.ConfChange) *raft_cmdpb.RaftCmdResponse {
-	// Todo@wy need to CheckRegionEpoch?
 	req := &raft_cmdpb.RaftCmdRequest{}
 	err := req.Unmarshal(cc.Context)
 	if err != nil {
 		panic(err)
+	}
+	// Note@wy need to check region
+	// situation msg1 with region1 append to log, but need some to apply, if msg2 with region1 come to log before applying msg1, it still satisfy region request. When raft apply msg2, msg2's region don't match store's region.
+	err = util.CheckRegionEpoch(req, d.Region(), true)
+	if errEpochNotMatching, ok := err.(*util.ErrEpochNotMatch); ok {
+		return ErrResp(errEpochNotMatching)
 	}
 	d.RaftGroup.ApplyConfChange(*cc)
 	switch cc.ChangeType {
@@ -175,10 +187,10 @@ func (d *peerMsgHandler) applyConfChange(cc *eraftpb.ConfChange) *raft_cmdpb.Raf
 	case eraftpb.ConfChangeType_RemoveNode:
 		d.removeNode(req.AdminRequest.ChangePeer)
 	}
-	if d.stopped {
+	if d.stopped { //Note@wy if stopped, peerStorage have been destoryed , it is impossible to get d.peerStorage.region and there is not need to generate a resp for callback because leader don't destory itself.
 		return nil
 	} else {
-		if d.IsLeader() {
+		if d.IsLeader() { //Note@wy to sync region information.
 			d.HeartbeatScheduler(d.ctx.schedulerTaskSender)
 		}
 		return &raft_cmdpb.RaftCmdResponse{
@@ -257,7 +269,7 @@ func (d *peerMsgHandler) HandleRaftReady() {
 		d.ctx.storeMeta.regions[snapRes.Region.Id] = snapRes.Region // Note@wy need to update region infomation and regionId maybe change
 		d.ctx.storeMeta.regionRanges.Delete(&regionItem{region: snapRes.PrevRegion})
 		d.ctx.storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: snapRes.Region}) // Note@wy need to update regionRange
-		d.ctx.storeMeta.Unlock()
+		d.ctx.storeMeta.Unlock()                                                          // Note@wy don't use defer, defer will execute before exiting function, may cost dead lock because destory peer need to get the lock of meta.
 	}
 	if err != nil {
 		log.Error(err.Error())
@@ -281,13 +293,15 @@ func (d *peerMsgHandler) HandleRaftReady() {
 					// if len(d.proposals) >= 1 {
 					// 	pi = d.proposals[0].index
 					// }
-					dl := len(d.proposals)
-					for di := 0; di < dl && d.proposals[di].index == ent.Index; di += 1 {
-						if d.proposals[di].term == ent.Term {
-							cbFind = d.proposals[di].cb
-							d.proposals = append(d.proposals[:di], d.proposals[di+1:]...)
-							break
+					// dl := len(d.proposals)
+					// for di := 0; di < dl && d.proposals[di].index == ent.Index; di += 1 {
+					for len(d.proposals) != 0 && d.proposals[0].index == ent.Index {
+						if d.proposals[0].term == ent.Term {
+							cbFind = d.proposals[0].cb
+						} else {
+							NotifyStaleReq(ent.Term, d.proposals[0].cb)
 						}
+						d.proposals = d.proposals[1:]
 					}
 				}
 				d.applyEntry(ent, cbFind)
