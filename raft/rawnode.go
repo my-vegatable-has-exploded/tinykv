@@ -209,7 +209,7 @@ func (rn *RawNode) Advance(rd Ready) { // Todo@wy this kind of rewrite may not b
 	if !IsEmptyHardState(rd.HardState) {
 		rn.prevHardSt = rd.HardState
 	}
-	if !IsEmptySnap(&rd.Snapshot) && rn.Raft.RaftLog.pendingSnapshot.Metadata.Index==rd.Snapshot.Metadata.Index &&rn.Raft.RaftLog.pendingSnapshot.Metadata.Term==rd.Snapshot.Metadata.Term {
+	if !IsEmptySnap(&rd.Snapshot) && rn.Raft.RaftLog.pendingSnapshot.Metadata.Index == rd.Snapshot.Metadata.Index && rn.Raft.RaftLog.pendingSnapshot.Metadata.Term == rd.Snapshot.Metadata.Term {
 		rn.Raft.RaftLog.maybeCompact()
 		rn.Raft.RaftLog.pendingSnapshot = nil
 	}

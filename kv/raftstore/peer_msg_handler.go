@@ -384,6 +384,29 @@ func (d *peerMsgHandler) preProposeRaftCommand(req *raft_cmdpb.RaftCmdRequest) e
 	return err
 }
 
+func (d *peerMsgHandler) nextProposalId() (uint64, uint64) {
+	prId := d.nextProposalIndex()
+	prTerm := d.Term()
+	log.Debugf("peer %+v handle proposal index %+v, term %+v", d.storeID(), prId, prTerm)
+	if l := len(d.proposals); l > 0 {
+		if prId <= d.proposals[l-1].index {
+			prInfo := ""
+			for _, pr := range d.proposals {
+				prInfo += fmt.Sprintf("index %+v, term %+v    ", pr.index, pr.term)
+			}
+			prInfo += fmt.Sprintf("index %+v, term %+v    ", prId, prTerm)
+			log.Warnf("Index of callback don't increasing, callbacks %+v", prInfo)
+			// Note@wy maybe case like this:
+			// leader A propose log 1,2,3..., but B,C,D,E don't receive. B hugup become leader with lager term ,  then A become follower, and log 1,2,3 will be discard in function maybeappend. If A become leader next time, A should clear the proposal which have been staled.
+			for _, pr := range d.proposals {
+				NotifyStaleReq(prTerm, pr.cb)
+			}
+			d.proposals = make([]*proposal, 0)
+		}
+	}
+	return prId, prTerm
+}
+
 func (d *peerMsgHandler) handleAdminRequest(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
 	req := msg.AdminRequest
 	switch req.CmdType {
@@ -403,7 +426,6 @@ func (d *peerMsgHandler) handleAdminRequest(msg *raft_cmdpb.RaftCmdRequest, cb *
 			},
 		})
 	case raft_cmdpb.AdminCmdType_ChangePeer:
-		// Todo@wy need to promise pendingConfIndex==0 ?
 		if d.RaftGroup.Raft.PendingConfIndex != raft.None && d.RaftGroup.Raft.PendingConfIndex > d.peerStorage.AppliedIndex() {
 			cb.Done(ErrResp(raft.ErrProposalDropped))
 			return
@@ -413,19 +435,7 @@ func (d *peerMsgHandler) handleAdminRequest(msg *raft_cmdpb.RaftCmdRequest, cb *
 		if err != nil {
 			panic(err)
 		}
-		prId := d.nextProposalIndex()
-		prTerm := d.Term()
-		log.Debugf("peer %+v handle proposal index %+v, term %+v", d.storeID(), prId, prTerm)
-		if l := len(d.proposals); l > 0 {
-			if prId <= d.proposals[l-1].index {
-				prInfo := ""
-				for _, pr := range d.proposals {
-					prInfo += fmt.Sprintf("index %+v, term %+v    ", pr.index, pr.term)
-				}
-				prInfo += fmt.Sprintf("index %+v, term %+v    ", prId, prTerm)
-				log.Warnf("Index of callback don't increasing, callbacks %+v\n", prInfo)
-			}
-		}
+		prId, prTerm := d.nextProposalId()
 		d.proposals = append(d.proposals, &proposal{
 			index: prId,
 			term:  prTerm,
@@ -448,19 +458,7 @@ func (d *peerMsgHandler) handleNormalRequest(msg *raft_cmdpb.RaftCmdRequest, cb 
 		panic(err)
 	}
 	if cb != nil {
-		prId := d.nextProposalIndex()
-		prTerm := d.Term()
-		log.Debugf("peer %+v handle proposal index %+v, term %+v", d.storeID(), prId, prTerm)
-		if l := len(d.proposals); l > 0 {
-			if prId <= d.proposals[l-1].index {
-				prInfo := ""
-				for _, pr := range d.proposals {
-					prInfo += fmt.Sprintf("index %+v, term %+v    ", pr.index, pr.term)
-				}
-				prInfo += fmt.Sprintf("index %+v, term %+v    ", prId, prTerm)
-				log.Warnf("Index of callback don't increasing, callbacks %+v\n", prInfo)
-			}
-		}
+		prId, prTerm := d.nextProposalId()
 		d.proposals = append(d.proposals, &proposal{
 			index: prId,
 			term:  prTerm,

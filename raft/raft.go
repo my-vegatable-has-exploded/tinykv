@@ -321,7 +321,7 @@ func (r *Raft) becomeCandidate() {
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
-	log.Debugf("%+v become leader\n", r.id)
+	log.Debugf("%+v become leader", r.id)
 	r.resetTick()
 	r.Lead = r.id
 	r.State = StateLeader
@@ -581,7 +581,7 @@ func (r *Raft) stepLeader(m pb.Message) error {
 	case pb.MessageType_MsgTransferLeader:
 		newTransferLeader := m.From
 		if _, ok := r.Prs[newTransferLeader]; !ok {
-			log.Debugf("Peer don't exit in %+v for leader transfering to %+v\n", r.id, newTransferLeader)
+			log.Debugf("Peer don't exit in %+v for leader transfering to %+v", r.id, newTransferLeader)
 			return nil // Todo@wy some error ?
 		}
 		lastTransferLeader := r.leadTransferee
@@ -771,7 +771,7 @@ func (r *Raft) maybeCommit() bool {
 		matchs = append(matchs, r.Prs[peer].Match)
 	}
 	sort.Slice(matchs, func(i, j int) bool { return matchs[i] < matchs[j] })
-	committedIndex := matchs[(len(r.Prs)-1)/2] // len(r.Prs) maybe even
+	committedIndex := matchs[len(r.Prs)/2] // len(r.Prs) maybe even
 	// log.Printf("%+v %+v\n", matchs, committedIndex)
 	return r.RaftLog.maybeCommit(committedIndex, r.Term)
 }
@@ -842,7 +842,7 @@ func (r *Raft) sendSnapshot(to uint64) bool {
 	}
 	if IsEmptySnap(&snap) {
 		// panic("need non-empty snapshot")
-		// return false
+		// return false // Todo@wy need to handle ?
 
 	}
 	r.msgs = append(r.msgs, pb.Message{
