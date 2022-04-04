@@ -85,12 +85,13 @@ func (r *SchedulerTaskHandler) onRegionHeartbeatResponse(resp *schedulerpb.Regio
 }
 
 func (r *SchedulerTaskHandler) onAskSplit(t *SchedulerAskSplitTask) {
-	resp, err := r.SchedulerClient.AskSplit(context.TODO(), t.Region)
+	resp, err := r.SchedulerClient.AskSplit(context.TODO(), t.Region) // Note@wy Get new region and peer information.
 	if err != nil {
 		log.Error(err)
 		return
 	}
 
+	// Note@wy wrapper to admin request
 	aq := &raft_cmdpb.AdminRequest{
 		CmdType: raft_cmdpb.AdminCmdType_Split,
 		Split: &raft_cmdpb.SplitRequest{

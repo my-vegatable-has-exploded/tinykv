@@ -96,6 +96,7 @@ type peer struct {
 	// Record the instants of peers being added into the configuration.
 	// Remove them after they are not pending any more.
 	// (Used in 3B conf change)
+	// Todo@wy what'is effect
 	PeersStartPendingTime map[uint64]time.Time
 	// Mark the peer as stopped, set when peer is destroyed
 	// (Used in 3B conf change)

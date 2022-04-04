@@ -191,13 +191,13 @@ func (c *Cluster) Request(key []byte, reqs []*raft_cmdpb.Request, timeout time.D
 		if resp == nil {
 			// it should be timeouted innerly
 			SleepMS(100)
-			log.Warnf("case %+v, reason request resp==nil: %+v\n", i, resp.String())
+			log.Warnf("case %+v, reason request resp==nil: %+v", i, resp.String())
 			// Panic("case %+v, reason: %+v\n", i, resp.String())
 			continue
 		}
 		if resp.Header.Error != nil {
 			SleepMS(100)
-			log.Warnf("case %+v, reason request resp.header.Erroe!=nil: %+v\n", i, resp.String())
+			log.Warnf("case %+v, reason request resp.header.Erroe!=nil: %+v", i, resp.String())
 			// log.Panicf("case %+v, reason: %+v\n", i, resp.Header)
 			continue
 		}
@@ -215,6 +215,7 @@ func (c *Cluster) CallCommandOnLeader(request *raft_cmdpb.RaftCmdRequest, timeou
 	startTime := time.Now()
 	regionID := request.Header.RegionId
 	leader := c.LeaderOfRegion(regionID)
+	log.Infof("Region %+v leader %+v request %+v", regionID, leader, request)
 	for {
 		if time.Since(startTime) > timeout {
 			return nil, nil
@@ -301,7 +302,7 @@ func (c *Cluster) GetStoreIdsOfRegion(regionID uint64) []uint64 {
 }
 
 func (c *Cluster) MustPut(key, value []byte) {
-	log.Infof("Put Key +%v value %+v", key, value)
+	log.Infof("Put Key +%v value %+v", string(key), string(value))
 	c.MustPutCF(engine_util.CfDefault, key, value)
 }
 
@@ -346,7 +347,7 @@ func (c *Cluster) GetCF(cf string, key []byte) []byte {
 }
 
 func (c *Cluster) MustDelete(key []byte) {
-	log.Infof("Delete Key %+v\n", key)
+	log.Infof("Delete Key %+v\n", string(key))
 	c.MustDeleteCF(engine_util.CfDefault, key)
 }
 

@@ -84,7 +84,7 @@ func (r *splitCheckHandler) splitCheck(regionID uint64, startKey, endKey []byte)
 			// update region size
 			r.router.Send(regionID, message.Msg{
 				Type: message.MsgTypeRegionApproximateSize,
-				Data: r.checker.currentSize,
+				Data: r.checker.currentSize, //Note@wy scan for approximatesize
 			})
 			break
 		}

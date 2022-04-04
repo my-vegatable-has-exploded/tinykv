@@ -376,7 +376,7 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 		EndKey:   snapData.Region.EndKey,
 	}
 	if resp := <-ch; resp {
-		if ps.isInitialized() {
+		if ps.isInitialized() { // Note@wy if ps isn't initialized, may cause storage delete all data because startkey and endkey is "".
 			if err := ps.clearMeta(kvWB, raftWB); err != nil {
 				return nil, err
 			}
