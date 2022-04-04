@@ -87,19 +87,28 @@ func (d *peerMsgHandler) applyEntry(e eraftpb.Entry, cb *message.Callback) {
 }
 
 func (d *peerMsgHandler) applyNormalRequest(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) *raft_cmdpb.RaftCmdResponse {
+	// Note@wy need to check regionKeyRange, because split region may occur before apply.
+	for _, req := range msg.Requests {
+		if key := d.getRequestKey(req); key != nil {
+			if err := util.CheckKeyInRegion(key, d.peerStorage.region); err != nil {
+				return ErrResp(err)
+			}
+		}
+	}
 	kvWB := &engine_util.WriteBatch{}
+	header := raft_cmdpb.RaftResponseHeader{}
 	resps := make([]*raft_cmdpb.Response, 0)
 	for _, req := range msg.Requests {
-		var resp raft_cmdpb.Response
+		resp := &raft_cmdpb.Response{}
 		switch req.CmdType {
 		case raft_cmdpb.CmdType_Get:
 			kvWB.WriteToDB(d.peerStorage.Engines.Kv)
 			kvWB = &engine_util.WriteBatch{}
 			val, err := engine_util.GetCF(d.ctx.engine.Kv, req.Get.Cf, req.Get.Key)
 			if err != nil {
-				log.Debug(err)
+				log.Error(err)
 			}
-			resp = raft_cmdpb.Response{
+			resp = &raft_cmdpb.Response{
 				CmdType: raft_cmdpb.CmdType_Get,
 				Get: &raft_cmdpb.GetResponse{
 					Value: val,
@@ -108,20 +117,20 @@ func (d *peerMsgHandler) applyNormalRequest(msg *raft_cmdpb.RaftCmdRequest, cb *
 		case raft_cmdpb.CmdType_Put:
 			kvWB.SetCF(req.Put.Cf, req.Put.Key, req.Put.Value)
 			log.Debugf("write %+v %+v %+v", req.Put.Cf, req.Put.Key, req.Put.Value)
-			resp = raft_cmdpb.Response{
+			resp = &raft_cmdpb.Response{
 				CmdType: raft_cmdpb.CmdType_Put,
 				Put:     &raft_cmdpb.PutResponse{},
 			}
 		case raft_cmdpb.CmdType_Delete:
 			kvWB.DeleteCF(req.Delete.Cf, req.Delete.Key)
-			resp = raft_cmdpb.Response{
+			resp = &raft_cmdpb.Response{
 				CmdType: raft_cmdpb.CmdType_Delete,
 				Delete:  &raft_cmdpb.DeleteResponse{},
 			}
 		case raft_cmdpb.CmdType_Snap:
 			kvWB.WriteToDB(d.peerStorage.Engines.Kv)
 			kvWB = &engine_util.WriteBatch{}
-			resp = raft_cmdpb.Response{
+			resp = &raft_cmdpb.Response{
 				CmdType: raft_cmdpb.CmdType_Snap,
 				Snap: &raft_cmdpb.SnapResponse{
 					Region: d.Region(),
@@ -133,14 +142,13 @@ func (d *peerMsgHandler) applyNormalRequest(msg *raft_cmdpb.RaftCmdRequest, cb *
 
 		case raft_cmdpb.CmdType_Invalid:
 
-			resp = raft_cmdpb.Response{
+			resp = &raft_cmdpb.Response{
 				CmdType: raft_cmdpb.CmdType_Invalid,
 			}
 		}
-		resps = append(resps, &resp)
+		resps = append(resps, resp)
 	}
 	kvWB.WriteToDB(d.peerStorage.Engines.Kv)
-	header := raft_cmdpb.RaftResponseHeader{}
 	cmdResp := &raft_cmdpb.RaftCmdResponse{
 		Header:    &header,
 		Responses: resps,
@@ -552,7 +560,28 @@ func (d *peerMsgHandler) handleAdminRequest(msg *raft_cmdpb.RaftCmdRequest, cb *
 	d.addProposal(cb)
 }
 
+func (d *peerMsgHandler) getRequestKey(req *raft_cmdpb.Request) []byte {
+	switch req.CmdType {
+	case raft_cmdpb.CmdType_Get:
+		return req.Get.Key
+	case raft_cmdpb.CmdType_Put:
+		return req.Put.Key
+	case raft_cmdpb.CmdType_Delete:
+		return req.Delete.Key
+	}
+	return nil
+}
+
 func (d *peerMsgHandler) handleNormalRequest(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
+	// Note@wy need to check regionKeyRange, because split region may occur before proposal.
+	for _, req := range msg.Requests {
+		if key := d.getRequestKey(req); key != nil {
+			if err := util.CheckKeyInRegion(key, d.peerStorage.region); err != nil {
+				cb.Done(ErrResp(err))
+				return
+			}
+		}
+	}
 	data, err := msg.Marshal()
 	if err != nil {
 		panic(err)
