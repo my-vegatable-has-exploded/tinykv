@@ -275,7 +275,7 @@ func (p *peer) Send(trans Transport, msgs []eraftpb.Message) {
 }
 
 /// Collects all pending peers and update `peers_start_pending_time`.
-func (p *peer) CollectPendingPeers() []*metapb.Peer {
+func (p *peer) CollectPendingPeers() []*metapb.Peer { // Note@wy collect pending peer , and wrapper them to regionheartbeat for scheduler's balancer.
 	pendingPeers := make([]*metapb.Peer, 0, len(p.Region().GetPeers()))
 	truncatedIdx := p.peerStorage.truncatedIndex()
 	for id, progress := range p.RaftGroup.GetProgress() {

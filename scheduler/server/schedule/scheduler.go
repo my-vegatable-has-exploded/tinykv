@@ -84,7 +84,7 @@ var schedulerArgsToDecoder = make(map[string]ConfigSliceDecoderBuilder)
 
 // RegisterScheduler binds a scheduler creator. It should be called in init()
 // func of a package.
-func RegisterScheduler(typ string, createFn CreateSchedulerFunc) {
+func RegisterScheduler(typ string, createFn CreateSchedulerFunc) { // Note@wy register scheduler
 	if _, ok := schedulerMap[typ]; ok {
 		log.Fatal("duplicated scheduler", zap.String("type", typ))
 	}

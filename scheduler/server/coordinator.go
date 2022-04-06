@@ -237,7 +237,7 @@ func (c *coordinator) shouldRun() bool {
 	return c.cluster.isPrepared()
 }
 
-func (c *coordinator) addScheduler(scheduler schedule.Scheduler, args ...string) error {
+func (c *coordinator) addScheduler(scheduler schedule.Scheduler, args ...string) error { // Note@wy add and run scheduler.
 	c.Lock()
 	defer c.Unlock()
 
@@ -285,7 +285,7 @@ func (c *coordinator) removeScheduler(name string) error {
 	return err
 }
 
-func (c *coordinator) runScheduler(s *scheduleController) {
+func (c *coordinator) runScheduler(s *scheduleController) { // Note@wy run scheduler
 	defer logutil.LogPanic()
 	defer c.wg.Done()
 	defer s.Cleanup(c.cluster)
