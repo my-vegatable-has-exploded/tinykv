@@ -339,7 +339,7 @@ func (c *client) reportRegionHeartbeat(ctx context.Context, stream schedulerpb.S
 		}
 
 		request.Header = c.requestHeader()
-		err := stream.Send(request)
+		err := stream.Send(request) //Note@wy transport through rpc
 		if err != nil {
 			c.pendingRequest = request
 			errCh <- err
@@ -537,7 +537,7 @@ func (c *client) StoreHeartbeat(ctx context.Context, stats *schedulerpb.StoreSta
 }
 
 func (c *client) RegionHeartbeat(request *schedulerpb.RegionHeartbeatRequest) error {
-	c.regionCh <- request
+	c.regionCh <- request // Note@wy send to regionCh
 	return nil
 }
 

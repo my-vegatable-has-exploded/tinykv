@@ -376,7 +376,7 @@ func (s *Server) RegionHeartbeat(stream schedulerpb.Scheduler_RegionHeartbeatSer
 			continue
 		}
 
-		err = cluster.HandleRegionHeartbeat(region)
+		err = cluster.HandleRegionHeartbeat(region) // Note@wy receive regionHeartbeat
 		if err != nil {
 			msg := err.Error()
 			hbStreams.sendErr(schedulerpb.ErrorType_UNKNOWN, msg, request.GetLeader())

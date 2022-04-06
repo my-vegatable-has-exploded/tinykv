@@ -179,7 +179,7 @@ func newRaft(c *Config) *Raft {
 	}
 	prs := make(map[uint64]*Progress)
 	lastIndex, _ := c.Storage.LastIndex()
-	if len(c.peers) == 0 {
+	if len(c.peers) == 0 { //Note@wy get peer's after createPeer()
 		c.peers = confState.Nodes
 	}
 	for _, peer := range c.peers {
@@ -770,7 +770,7 @@ func (r *Raft) maybeCommit() bool {
 	for peer := range r.Prs {
 		matchs = append(matchs, r.Prs[peer].Match)
 	}
-	sort.Slice(matchs, func(i, j int) bool { return matchs[i] < matchs[j] })
+	sort.Slice(matchs, func(i, j int) bool { return matchs[i] > matchs[j] })
 	committedIndex := matchs[len(r.Prs)/2] // len(r.Prs) maybe even
 	// log.Printf("%+v %+v\n", matchs, committedIndex)
 	return r.RaftLog.maybeCommit(committedIndex, r.Term)
